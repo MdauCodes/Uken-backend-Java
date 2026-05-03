@@ -1,0 +1,200 @@
+package com.mdau.ukena.order;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.dto.*;
+import com.mdau.ukena.product.Product;
+import com.mdau.ukena.product.ProductRepository;
+import com.mdau.ukena.product.ProductStatus;
+import com.mdau.ukena.user.User;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final OrderRepository orderRepository;
+    private final ProductRepository productRepository;
+    private final ObjectMapper objectMapper;
+    private final EmailService emailService;
+
+    @Transactional
+    public OrderDto place(User buyer, CreateOrderRequest req) {
+        List<OrderItem> items = req.items().stream().map(itemReq -> {
+            Product product = productRepository.findActiveById(itemReq.productId())
+                    .orElseThrow(() -> ApiException.notFound(
+                            "Product not found: " + itemReq.productId()));
+
+            if (product.getStatus() != ProductStatus.ACTIVE) {
+                throw ApiException.badRequest(
+                        product.getStatus() == ProductStatus.OUT_OF_STOCK
+                                ? product.getName() + " is currently out of stock"
+                                : product.getName() + " is not available for purchase");
+            }
+
+            return OrderItem.builder()
+                    .product(product)
+                    .creator(product.getCreator())
+                    .productName(product.getName())
+                    .quantity(itemReq.quantity())
+                    .pricePence(product.getPricePence())
+                    .image(product.getHeroImage())
+                    .creatorFullName(product.getCreator().getFullName())
+                    .creatorRegion(product.getCreator().getRegion())
+                    .build();
+        }).toList();
+
+        int totalPence = items.stream()
+                .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
+
+        Order order = Order.builder()
+                .displayId(generateDisplayId())
+                .buyer(buyer)
+                .buyerFullName(buyer.getFullName())
+                .buyerEmail(buyer.getEmail())
+                .totalPence(totalPence)
+                .delivery(toJson(req.delivery()))
+                .status(OrderStatus.PENDING)
+                .build();
+
+        items.forEach(item -> item.setOrder(order));
+        order.getItems().addAll(items);
+        Order saved = orderRepository.save(order);
+
+        // Send emails asynchronously — do not block the order response
+        sendOrderEmails(saved);
+
+        return toDto(saved);
+    }
+
+    private void sendOrderEmails(Order order) {
+        // 1. Confirmation to buyer
+        String creatorNames = order.getItems().stream()
+                .map(OrderItem::getCreatorFullName)
+                .distinct()
+                .collect(Collectors.joining(", "));
+
+        emailService.sendOrderConfirmation(
+                order.getBuyerEmail(),
+                order.getBuyerFullName(),
+                order.getDisplayId(),
+                order.getTotalPence(),
+                creatorNames);
+
+        // 2. Notification to each unique creator
+        order.getItems().stream()
+                .filter(i -> i.getCreator() != null)
+                .collect(Collectors.groupingBy(
+                        i -> i.getCreator().getId()))
+                .forEach((creatorId, creatorItems) -> {
+                    OrderItem first = creatorItems.get(0);
+                    // TODO: load creator email from UserRepository by creatorId
+                    // For now logged — wire fully when user-creator email lookup added
+                    log.info("TODO: notify creator {} about order {}",
+                            creatorId, order.getDisplayId());
+                });
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getBuyerOrders(UUID buyerId) {
+        return orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId)
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getCreatorOrders(String creatorId) {
+        return orderRepository.findByCreatorId(creatorId)
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getAllOrders() {
+        return orderRepository.findAllOrderByCreatedAtDesc()
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional
+    public OrderDto updateStatus(String creatorId, String displayId,
+                                 UpdateStatusRequest req) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        boolean owns = order.getItems().stream()
+                .anyMatch(i -> i.getCreator() != null
+                        && i.getCreator().getId().equals(creatorId));
+        if (!owns) throw ApiException.forbidden("You do not have access to this order");
+        OrderStatus next = parseStatus(req.status());
+        validateTransition(order.getStatus(), next);
+        order.setStatus(next);
+        return toDto(orderRepository.save(order));
+    }
+
+    @Transactional
+    public OrderDto adminRefund(String displayId) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        order.setStatus(OrderStatus.CANCELLED);
+        log.info("Order {} cancelled by admin", displayId);
+        return toDto(orderRepository.save(order));
+    }
+
+    private void validateTransition(OrderStatus current, OrderStatus next) {
+        boolean valid = switch (current) {
+            case PENDING   -> next == OrderStatus.PREPARING;
+            case PREPARING -> next == OrderStatus.SHIPPED;
+            case SHIPPED   -> next == OrderStatus.DELIVERED;
+            default        -> false;
+        };
+        if (!valid) throw ApiException.badRequest(
+                "Invalid status transition from " + current + " to " + next);
+    }
+
+    private OrderStatus parseStatus(String status) {
+        try { return OrderStatus.valueOf(status.toUpperCase()); }
+        catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Invalid status: " + status); }
+    }
+
+    private String generateDisplayId() {
+        String month = DateTimeFormatter.ofPattern("yyyyMM")
+                .format(LocalDateTime.now());
+        int rand = ThreadLocalRandom.current().nextInt(1000, 9999);
+        return "UKN-" + month + "-" + rand;
+    }
+
+    private String toJson(Object obj) {
+        try { return objectMapper.writeValueAsString(obj); }
+        catch (Exception e) { return "{}"; }
+    }
+
+    private DeliveryDto parseDelivery(String json) {
+        try { return objectMapper.readValue(json, DeliveryDto.class); }
+        catch (Exception e) { return null; }
+    }
+
+    OrderDto toDto(Order o) {
+        List<OrderItemDto> items = o.getItems().stream().map(i ->
+                new OrderItemDto(
+                        i.getProduct() != null ? i.getProduct().getId() : null,
+                        i.getProductName(), i.getQuantity(), i.getPricePence(),
+                        i.getImage(),
+                        new OrderItemCreatorDto(
+                                i.getCreator() != null ? i.getCreator().getId() : null,
+                                i.getCreatorFullName(), i.getCreatorRegion()))
+        ).toList();
+        return new OrderDto(o.getDisplayId(), o.getCreatedAt(),
+                o.getStatus().name(), o.getTotalPence(),
+                new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
+                items, parseDelivery(o.getDelivery()));
+    }
+}

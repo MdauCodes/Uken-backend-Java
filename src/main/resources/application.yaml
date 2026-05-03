@@ -1,0 +1,151 @@
+spring:
+  application:
+    name: ukena-backend
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ukena}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+      pool-name: UkenaHikariPool
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        format_sql: false
+        use_sql_comments: false
+        generate_statistics: false
+        cache:
+          use_second_level_cache: false
+
+  mail:
+    host: ${MAIL_HOST:smtp-relay.brevo.com}
+    port: ${MAIL_PORT:587}
+    username: ${BREVO_USERNAME:}
+    password: ${BREVO_SMTP_KEY:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+    test-connection: false
+
+  freemarker:
+    template-loader-path: classpath:/templates/email/
+    default-encoding: UTF-8
+    cache: false
+    prefer-file-system-access: false
+
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 24MB
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${PORT:8080}
+  servlet:
+    context-path: /api
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/plain
+    min-response-size: 1024
+  http2:
+    enabled: true
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-exception: false
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+ukena:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-hours: 24
+
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000,https://ukena.co.uk}
+
+  media:
+    provider: ${MEDIA_PROVIDER:cloudinary}
+    cloudinary-url: ${CLOUDINARY_URL:}
+
+  admin:
+    email: ${UKENA_ADMIN_EMAIL:admin@ukena.co.uk}
+    password: ${UKENA_ADMIN_PASSWORD:}
+
+  email:
+    from-address: ${EMAIL_FROM:hello@ukena.co.uk}
+    from-name: ${EMAIL_FROM_NAME:Ukena}
+    brevo-api-key: ${BREVO_API_KEY:}
+    brevo-api-url: https://api.brevo.com/v3/smtp/email
+    use-brevo-api: ${USE_BREVO_API:true}
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${SWAGGER_ENABLED:true}
+  api-docs:
+    path: /v3/api-docs
+    enabled: ${SWAGGER_ENABLED:true}
+
+logging:
+  level:
+    root: WARN
+    com.mdau.ukena: INFO
+    org.springframework.web: WARN
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+resilience4j:
+  ratelimiter:
+    instances:
+      public-api:
+        limit-for-period: 60
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      auth-api:
+        limit-for-period: 10
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      upload-api:
+        limit-for-period: 20
+        limit-refresh-period: 1m
+        timeout-duration: 0s
