@@ -55,6 +55,12 @@ public class Order {
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
 
+    @Column(name = "gateway_ref", length = 120)
+    private String gatewayRef;
+
+    @Column(name = "paid_at")
+    private Instant paidAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

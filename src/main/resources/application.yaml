@@ -102,7 +102,10 @@ ukena:
 
   media:
     provider: ${MEDIA_PROVIDER:cloudinary}
-    cloudinary-url: ${CLOUDINARY_URL:}
+  cloudinary:
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+    api-key: ${CLOUDINARY_API_KEY:}
+    api-secret: ${CLOUDINARY_API_SECRET:}
 
   admin:
     email: ${UKENA_ADMIN_EMAIL:admin@ukena.co.uk}
@@ -149,3 +152,29 @@ resilience4j:
         limit-for-period: 20
         limit-refresh-period: 1m
         timeout-duration: 0s
+
+  payment:
+    provider: ${PAYMENT_PROVIDER:pesapal}
+    commission-rate: 0.15
+
+  pesapal:
+    consumer-key: ${PESAPAL_CONSUMER_KEY:}
+    consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
+    base-url: ${PESAPAL_BASE_URL:https://cybqa.pesapal.com/pesapalv3}
+    ipn-url: ${BACKEND_URL:http://localhost:8080}/api/payments/webhook
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  flutterwave:
+    secret-key: ${FLUTTERWAVE_SECRET_KEY:}
+    public-key: ${FLUTTERWAVE_PUBLIC_KEY:}
+    webhook-secret: ${FLUTTERWAVE_WEBHOOK_SECRET:}
+    base-url: https://api.flutterwave.com/v3
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    from-number: ${TWILIO_FROM_NUMBER:}
+    enabled: ${TWILIO_ENABLED:false}

@@ -1,0 +1,192 @@
+package com.mdau.ukena.payment;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.admin.PayoutRecord;
+import com.mdau.ukena.admin.PayoutRepository;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.creator.CreatorRepository;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.Order;
+import com.mdau.ukena.order.OrderItem;
+import com.mdau.ukena.order.OrderRepository;
+import com.mdau.ukena.order.OrderStatus;
+import com.mdau.ukena.security.CurrentUser;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PaymentService {
+
+    private final PaymentGateway           paymentGateway;
+    private final OrderRepository          orderRepository;
+    private final EarningsLedgerRepository ledgerRepository;
+    private final PayoutRepository         payoutRepository;
+    private final CreatorRepository        creatorRepository;
+    private final EmailService             emailService;
+    private final ObjectMapper             objectMapper;
+
+    @Value("${ukena.payment.commission-rate:0.15}")
+    private BigDecimal commissionRate;
+
+    @Transactional
+    public PaymentInitResponse initiate(String displayId, CurrentUser currentUser) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
+
+        if (!order.getBuyer().getId().equals(currentUser.id())) {
+            throw ApiException.forbidden("This order does not belong to you");
+        }
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw ApiException.badRequest("Order is not in PENDING state");
+        }
+
+        String description = "Ukena order " + displayId + " - " +
+                order.getItems().stream()
+                     .map(OrderItem::getProductName)
+                     .distinct()
+                     .collect(Collectors.joining(", "));
+
+        PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
+                order.getId(), displayId, order.getTotalPence(),
+                "GBP", order.getBuyerEmail(), order.getBuyerFullName(), description));
+
+        order.setGatewayRef(result.gatewayRef());
+        orderRepository.save(order);
+        return new PaymentInitResponse(result.paymentLink(), result.gatewayRef());
+    }
+
+    @Transactional
+    public void handlePesapalIpn(String trackingId, String merchantRef) {
+        if (trackingId == null || trackingId.isBlank()) {
+            log.warn("PesaPal IPN received with no orderTrackingId");
+            return;
+        }
+        if (merchantRef == null || merchantRef.isBlank()) {
+            log.warn("PesaPal IPN missing merchantRef, skipping");
+            return;
+        }
+        log.info("PesaPal IPN: trackingId={} merchantRef={}", trackingId, merchantRef);
+        orderRepository.findByDisplayId(merchantRef).ifPresentOrElse(order -> {
+            if (order.getStatus() == OrderStatus.PAID) {
+                log.info("Order {} already PAID, skipping", merchantRef);
+                return;
+            }
+            if (paymentGateway.verifyPayment(trackingId)) {
+                markOrderPaid(order, trackingId);
+            } else {
+                log.warn("PesaPal payment not completed for trackingId={}", trackingId);
+            }
+        }, () -> log.warn("PesaPal IPN: order not found for ref={}", merchantRef));
+    }
+
+    @Transactional
+    public void handleFlutterwaveWebhook(String payload, String signature) {
+        if (payload == null || payload.isBlank()) return;
+        if (!paymentGateway.verifyWebhookSignature(payload, signature)) {
+            log.warn("Flutterwave webhook signature invalid - ignoring");
+            return;
+        }
+        try {
+            JsonNode node  = objectMapper.readTree(payload);
+            String   event = node.path("event").asText();
+            if (!"charge.completed".equalsIgnoreCase(event)) return;
+            String status = node.path("data").path("status").asText();
+            String flwRef = node.path("data").path("flw_ref").asText();
+            String txRef  = node.path("data").path("tx_ref").asText();
+            if (!"successful".equalsIgnoreCase(status)) return;
+            String displayId = txRef.contains("-") ?
+                    txRef.substring(0, txRef.lastIndexOf('-')) : txRef;
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
+                if (order.getStatus() == OrderStatus.PAID) return;
+                if (paymentGateway.verifyPayment(flwRef)) markOrderPaid(order, flwRef);
+            }, () -> log.warn("Flutterwave webhook: order not found for txRef={}", txRef));
+        } catch (Exception e) {
+            log.error("Flutterwave webhook parse error", e);
+        }
+    }
+
+    private void markOrderPaid(Order order, String gatewayRef) {
+        order.setStatus(OrderStatus.PAID);
+        order.setGatewayRef(gatewayRef);
+        order.setPaidAt(Instant.now());
+        orderRepository.save(order);
+        creditLedger(order);
+        updatePayoutRecord(order);
+        String creatorNames = order.getItems().stream()
+                .map(OrderItem::getCreatorFullName).distinct()
+                .collect(Collectors.joining(", "));
+        emailService.sendOrderConfirmation(
+                order.getBuyerEmail(), order.getBuyerFullName(),
+                order.getDisplayId(), order.getTotalPence(), creatorNames);
+        log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
+    }
+
+    private void creditLedger(Order order) {
+        for (OrderItem item : order.getItems()) {
+            if (item.getCreator() == null) continue;
+            int gross = item.getPricePence() * item.getQuantity();
+            int net   = gross - new BigDecimal(gross)
+                    .multiply(commissionRate).setScale(0, RoundingMode.HALF_UP).intValue();
+            ledgerRepository.save(EarningsLedger.builder()
+                    .artisanProfileId(item.getCreator().getId())
+                    .orderId(order.getId())
+                    .orderItemId(item.getId())
+                    .grossPence(gross)
+                    .commissionRate(commissionRate)
+                    .netPence(net)
+                    .status(LedgerStatus.PENDING)
+                    .build());
+        }
+    }
+
+    private void updatePayoutRecord(Order order) {
+        order.getItems().stream()
+                .filter(i -> i.getCreator() != null)
+                .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
+                .forEach((creatorId, items) -> {
+                    int netTotal = items.stream().mapToInt(i -> {
+                        int gross = i.getPricePence() * i.getQuantity();
+                        return gross - new BigDecimal(gross)
+                                .multiply(commissionRate)
+                                .setScale(0, RoundingMode.HALF_UP).intValue();
+                    }).sum();
+                    creatorRepository.findActiveById(creatorId).ifPresent(creator -> {
+                        PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
+                                .orElseGet(() -> PayoutRecord.builder()
+                                        .creatorId(creatorId).creator(creator).build());
+                        payout.setPendingPence(payout.getPendingPence() + netTotal);
+                        payoutRepository.save(payout);
+                    });
+                });
+    }
+
+    @Transactional
+    public PayoutResult gatewayPayout(String creatorId, String accountNumber,
+                                      String accountName) {
+        int netPence = ledgerRepository
+                .sumNetPenceByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
+        if (netPence <= 0)
+            throw ApiException.badRequest("No pending earnings for creator " + creatorId);
+        PayoutResult result = paymentGateway.initiateTransfer(new PayoutRequest(
+                creatorId, netPence, accountNumber, accountName,
+                "Ukena payout to " + accountName));
+        if (result.success()) {
+            List<EarningsLedger> entries = ledgerRepository
+                    .findByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
+            entries.forEach(e -> e.setStatus(LedgerStatus.PAID));
+            ledgerRepository.saveAll(entries);
+        }
+        return result;
+    }
+}

@@ -2,6 +2,7 @@ package com.mdau.ukena.product;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
@@ -26,9 +27,8 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final ProductImageRepository imageRepository;
     private final CreatorRepository creatorRepository;
+    private final CloudinaryService cloudinaryService;
     private final ObjectMapper objectMapper;
-
-    // ── Public browse ─────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public Page<ProductDto> browse(String creatorId, Integer minPrice,
@@ -53,13 +53,10 @@ public class ProductService {
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
     }
 
-    // ── Creator product management ────────────────────────────────
-
     @Transactional
     public ProductDto create(String creatorId, ProductCreateRequest req) {
         Creator creator = creatorRepository.findActiveById(creatorId)
                 .orElseThrow(() -> ApiException.forbidden("No active creator profile found"));
-
         String slug = generateSlug(req.name());
         Product product = Product.builder()
                 .id(slug).creator(creator).name(req.name())
@@ -73,7 +70,8 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductDto update(String creatorId, String productId, ProductUpdateRequest req) {
+    public ProductDto update(String creatorId, String productId,
+                             ProductUpdateRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
         product.setName(req.name());
         product.setPricePence(req.pricePence());
@@ -85,58 +83,52 @@ public class ProductService {
         return toDto(productRepository.save(product));
     }
 
-    // Creator can set ACTIVE, OUT_OF_STOCK, SUSPENDED_BY_CREATOR
     @Transactional
     public ProductDto updateStatusByCreator(String creatorId, String productId,
                                             ProductStatusUpdateRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
         ProductStatus newStatus = parseStatus(req.status());
-        if (newStatus == ProductStatus.SUSPENDED_BY_ADMIN) {
+        if (newStatus == ProductStatus.SUSPENDED_BY_ADMIN)
             throw ApiException.forbidden("Only admins can set SUSPENDED_BY_ADMIN");
-        }
         product.setStatus(newStatus);
         return toDto(productRepository.save(product));
     }
 
-    // Admin can set any status
     @Transactional
-    public ProductDto updateStatusByAdmin(String productId, ProductStatusUpdateRequest req) {
+    public ProductDto updateStatusByAdmin(String productId,
+                                          ProductStatusUpdateRequest req) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
         product.setStatus(parseStatus(req.status()));
         return toDto(productRepository.save(product));
     }
 
-    // Soft-delete — sets deletedAt, never removes from DB
     @Transactional
     public void delete(String creatorId, String productId) {
         Product product = getOwnedProduct(creatorId, productId);
+        deleteProductImages(product);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
-        log.info("Product {} soft-deleted by creator {}", productId, creatorId);
+        log.info("Product {} soft-deleted", productId);
     }
 
-    // Admin soft-delete
     @Transactional
     public void adminDelete(String productId) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
+        deleteProductImages(product);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
         log.info("Product {} soft-deleted by admin", productId);
     }
 
-    // ── Image management ──────────────────────────────────────────
-
     @Transactional
-    public ProductDto addImage(String creatorId, String productId, AddImageRequest req) {
+    public ProductDto addImage(String creatorId, String productId,
+                               AddImageRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
-
-        // If this is primary, demote existing primary
         if (req.isPrimary()) {
             product.getImages().forEach(img -> img.setPrimary(false));
         }
-
         ProductImage image = ProductImage.builder()
                 .product(product).url(req.url())
                 .cloudinaryId(req.cloudinaryId())
@@ -153,15 +145,14 @@ public class ProductService {
         getOwnedProduct(creatorId, productId);
         ProductImage image = imageRepository.findById(imageId)
                 .orElseThrow(() -> ApiException.notFound("Image not found"));
-        if (!image.getProduct().getId().equals(productId)) {
+        if (!image.getProduct().getId().equals(productId))
             throw ApiException.forbidden("Image does not belong to this product");
+        // Delete from Cloudinary
+        if (image.getCloudinaryId() != null) {
+            cloudinaryService.deleteImage(image.getCloudinaryId());
         }
-        // TODO: call Cloudinary delete API using image.getCloudinaryId()
-        // cloudinaryService.delete(image.getCloudinaryId());
         imageRepository.delete(image);
     }
-
-    // ── Creator product list ──────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<ProductDto> getByCreator(String creatorId) {
@@ -171,12 +162,21 @@ public class ProductService {
 
     // ── Helpers ───────────────────────────────────────────────────
 
+    private void deleteProductImages(Product product) {
+        List<String> publicIds = product.getImages().stream()
+                .map(ProductImage::getCloudinaryId)
+                .filter(id -> id != null && !id.isBlank())
+                .toList();
+        if (!publicIds.isEmpty()) {
+            cloudinaryService.deleteImages(publicIds);
+        }
+    }
+
     private Product getOwnedProduct(String creatorId, String productId) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
-        if (!product.getCreator().getId().equals(creatorId)) {
+        if (!product.getCreator().getId().equals(creatorId))
             throw ApiException.forbidden("You do not own this product");
-        }
         return product;
     }
 

@@ -10,7 +10,6 @@ import java.util.Optional;
 
 public interface ProductRepository extends JpaRepository<Product, String> {
 
-    // Public browse — only ACTIVE, not deleted
     @Query("""
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
@@ -26,7 +25,6 @@ public interface ProductRepository extends JpaRepository<Product, String> {
             @Param("maxPrice")  Integer maxPrice,
             Pageable pageable);
 
-    // Creator's own products — all statuses, not deleted
     @Query("""
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
@@ -35,9 +33,18 @@ public interface ProductRepository extends JpaRepository<Product, String> {
     """)
     List<Product> findByCreatorIdNotDeleted(@Param("creatorId") String creatorId);
 
-    // Single product — not deleted
     @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
     Optional<Product> findActiveById(@Param("id") String id);
 
     boolean existsByIdAndCreatorId(String id, String creatorId);
+
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND (LOWER(p.name)       LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(p.pieceStory) LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(p.creator.craft) LIKE LOWER(CONCAT('%', :q, '%')))
+    """)
+    Page<Product> search(@Param("q") String q, Pageable pageable);
 }

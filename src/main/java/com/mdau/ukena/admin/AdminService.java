@@ -4,6 +4,9 @@ import com.mdau.ukena.admin.dto.*;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.payment.PaymentService;
+import com.mdau.ukena.payment.PayoutResult;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
@@ -27,8 +30,10 @@ public class AdminService {
     private final ReviewRepository reviewRepository;
     private final FeaturedSlotRepository featuredSlotRepository;
     private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    private final PaymentService paymentService;
 
-    // ── Staff management ──────────────────────────────────────────
+    // -- Staff management ---------------------------------------------------
 
     @Transactional
     public StaffDto createStaff(CreateStaffRequest req) {
@@ -57,7 +62,7 @@ public class AdminService {
                 .toList();
     }
 
-    // ── Buyers ────────────────────────────────────────────────────
+    // -- Buyers -------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public List<AdminBuyerRow> listBuyers() {
@@ -86,7 +91,7 @@ public class AdminService {
         log.info("User {} unsuspended", userId);
     }
 
-    // ── Creators ──────────────────────────────────────────────────
+    // -- Creators -----------------------------------------------------------
 
     @Transactional
     public void softDeleteCreator(String creatorId) {
@@ -97,7 +102,7 @@ public class AdminService {
         log.info("Creator {} soft-deleted", creatorId);
     }
 
-    // ── Payouts ───────────────────────────────────────────────────
+    // -- Payouts ------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public List<CreatorPayoutDto> listPayouts() {
@@ -106,7 +111,8 @@ public class AdminService {
     }
 
     @Transactional
-    public CreatorPayoutDto processPayout(String creatorId) {
+    public CreatorPayoutDto processPayout(String creatorId, String accountNumber,
+                                          String accountName) {
         Creator creator = creatorRepository.findActiveById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
 
@@ -121,17 +127,28 @@ public class AdminService {
             throw ApiException.badRequest("No pending earnings to pay out");
         }
 
-        // TODO: call Flutterwave Transfer API or M-Pesa B2C here
-        log.info("Processing payout of {}p to creator {}", amount, creatorId);
+        // Attempt gateway transfer; log outcome either way
+        PayoutResult result = paymentService.gatewayPayout(
+                creatorId, accountNumber, accountName);
+        log.info("Payout for creator {}: success={} ref={} msg={}",
+                creatorId, result.success(), result.gatewayRef(), result.message());
 
+        // Update PayoutRecord regardless (PaymentService already credited ledger if success)
         payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
         payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
         payout.setPendingPence(0);
         payout.setLastPaidAt(Instant.now());
-        return toPayoutDto(payoutRepository.save(payout));
+        PayoutRecord saved = payoutRepository.save(payout);
+
+        // Email artisan
+        userRepository.findByCreatorId(creatorId).ifPresent(user ->
+                emailService.sendPayoutConfirmation(
+                        user.getEmail(), user.getFullName(), amount, "GBP"));
+
+        return toPayoutDto(saved);
     }
 
-    // ── Reviews ───────────────────────────────────────────────────
+    // -- Reviews ------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public List<ProductReviewDto> listReviews() {
@@ -151,7 +168,7 @@ public class AdminService {
         return toReviewDto(reviewRepository.save(review));
     }
 
-    // ── Featured slots ────────────────────────────────────────────
+    // -- Featured slots -----------------------------------------------------
 
     @Transactional(readOnly = true)
     public List<FeaturedSlotDto> getFeaturedSlots() {
@@ -172,7 +189,7 @@ public class AdminService {
         return getFeaturedSlots();
     }
 
-    // ── Mappers ───────────────────────────────────────────────────
+    // -- Mappers ------------------------------------------------------------
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {
         Creator c = p.getCreator();

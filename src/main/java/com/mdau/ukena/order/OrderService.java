@@ -8,6 +8,7 @@ import com.mdau.ukena.product.Product;
 import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.product.ProductStatus;
 import com.mdau.ukena.user.User;
+import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,10 +25,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final OrderRepository orderRepository;
+    private final OrderRepository   orderRepository;
     private final ProductRepository productRepository;
-    private final ObjectMapper objectMapper;
-    private final EmailService emailService;
+    private final UserRepository    userRepository;
+    private final ObjectMapper      objectMapper;
+    private final EmailService      emailService;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
@@ -72,9 +74,7 @@ public class OrderService {
         order.getItems().addAll(items);
         Order saved = orderRepository.save(order);
 
-        // Send emails asynchronously — do not block the order response
         sendOrderEmails(saved);
-
         return toDto(saved);
     }
 
@@ -92,17 +92,22 @@ public class OrderService {
                 order.getTotalPence(),
                 creatorNames);
 
-        // 2. Notification to each unique creator
+        // 2. Notification to each unique creator via UserRepository lookup
         order.getItems().stream()
                 .filter(i -> i.getCreator() != null)
-                .collect(Collectors.groupingBy(
-                        i -> i.getCreator().getId()))
+                .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
                 .forEach((creatorId, creatorItems) -> {
                     OrderItem first = creatorItems.get(0);
-                    // TODO: load creator email from UserRepository by creatorId
-                    // For now logged — wire fully when user-creator email lookup added
-                    log.info("TODO: notify creator {} about order {}",
-                            creatorId, order.getDisplayId());
+                    userRepository.findByCreatorId(creatorId).ifPresentOrElse(
+                            user -> emailService.sendNewOrderNotification(
+                                    user.getEmail(),
+                                    user.getFullName(),
+                                    order.getDisplayId(),
+                                    first.getProductName(),
+                                    creatorItems.stream()
+                                            .mapToInt(OrderItem::getQuantity).sum()),
+                            () -> log.warn("No user account found for creatorId={}",
+                                    creatorId));
                 });
     }
 
@@ -150,7 +155,7 @@ public class OrderService {
 
     private void validateTransition(OrderStatus current, OrderStatus next) {
         boolean valid = switch (current) {
-            case PENDING   -> next == OrderStatus.PREPARING;
+            case PAID      -> next == OrderStatus.PREPARING;
             case PREPARING -> next == OrderStatus.SHIPPED;
             case SHIPPED   -> next == OrderStatus.DELIVERED;
             default        -> false;
