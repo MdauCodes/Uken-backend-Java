@@ -47,11 +47,16 @@ public class SecurityConfig {
                     .accessDeniedHandler(accessDeniedHandler))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/auth/login", "/auth/register").permitAll()
+                .requestMatchers("/auth/login", "/auth/register",
+                        "/auth/forgot-password", "/auth/reset-password").permitAll()
                 .requestMatchers(HttpMethod.POST, "/applications").permitAll()
+                .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/payments/webhook").permitAll()
                 .requestMatchers(HttpMethod.GET,
                         "/creators", "/creators/*",
-                        "/products", "/products/*").permitAll()
+                        "/products", "/products/*",
+                        "/reviews/product/*",
+                        "/search").permitAll()
                 .requestMatchers(
                         "/actuator/health",
                         "/v3/api-docs/**",
