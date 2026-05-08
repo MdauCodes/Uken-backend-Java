@@ -40,7 +40,7 @@ spring:
     host: ${MAIL_HOST:smtp-relay.brevo.com}
     port: ${MAIL_PORT:587}
     username: ${BREVO_USERNAME:}
-    password: ${BREVO_SMTP_KEY:}
+    password: ${BREVO_API_KEY:}
     properties:
       mail:
         smtp:
@@ -112,7 +112,7 @@ ukena:
     password: ${UKENA_ADMIN_PASSWORD:}
 
   email:
-    from-address: ${EMAIL_FROM:hello@ukena.co.uk}
+    from-address: ${EMAIL_FROM:mdaucodes@gmail.com}
     from-name: ${EMAIL_FROM_NAME:Ukena}
     brevo-api-key: ${BREVO_API_KEY:}
     brevo-api-url: https://api.brevo.com/v3/smtp/email
