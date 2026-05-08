@@ -67,6 +67,14 @@ public class EmailServiceImpl implements EmailService {
 
         String method = (useBrevoApi && !brevoApiKey.isBlank()) ? "Brevo API" : "SMTP";
         log.info("Email service ready — method: {}, from: {} <{}>", method, fromName, fromAddress);
+
+        // Visibility into config problems at startup
+        if (useBrevoApi && brevoApiKey.isBlank()) {
+            log.error("EMAIL MISCONFIGURED: USE_BREVO_API=true but BREVO_API_KEY is blank");
+        }
+        if (!useBrevoApi) {
+            log.warn("Email using SMTP fallback — ensure BREVO_USERNAME and BREVO_SMTP_KEY are set");
+        }
     }
 
     // ── 1. Order confirmation ─────────────────────────────────────
@@ -207,6 +215,11 @@ public class EmailServiceImpl implements EmailService {
     // ── Brevo REST API ────────────────────────────────────────────
 
     private void sendViaBrevo(String toEmail, String subject, String html) throws IOException {
+
+        if (brevoApiKey.isBlank()) {
+            throw new IOException("BREVO_API_KEY is not configured");
+        }
+
         Map<String, Object> sender = new HashMap<>();
         sender.put("name", fromName);
         sender.put("email", fromAddress);
