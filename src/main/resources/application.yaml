@@ -36,6 +36,23 @@ spring:
         cache:
           use_second_level_cache: false
 
+  mail:
+    host: ${MAIL_HOST:smtp-relay.brevo.com}
+    port: ${MAIL_PORT:587}
+    username: ${BREVO_USERNAME:}
+    password: ${BREVO_SMTP_KEY:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+    test-connection: false
+
   freemarker:
     template-loader-path: classpath:/templates/email/
     default-encoding: UTF-8
@@ -100,6 +117,7 @@ ukena:
     from-name: ${EMAIL_FROM_NAME:Ukena}
     brevo-api-key: ${BREVO_API_KEY}
     brevo-api-url: https://api.brevo.com/v3/smtp/email
+    use-brevo-api: ${USE_BREVO_API:true}
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
 
   payment:
