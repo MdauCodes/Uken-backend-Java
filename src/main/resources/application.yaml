@@ -36,23 +36,6 @@ spring:
         cache:
           use_second_level_cache: false
 
-  mail:
-    host: ${MAIL_HOST:smtp-relay.brevo.com}
-    port: ${MAIL_PORT:587}
-    username: ${BREVO_USERNAME:}
-    password: ${BREVO_API_KEY:}
-    properties:
-      mail:
-        smtp:
-          auth: true
-          starttls:
-            enable: true
-            required: true
-          connectiontimeout: 5000
-          timeout: 5000
-          writetimeout: 5000
-    test-connection: false
-
   freemarker:
     template-loader-path: classpath:/templates/email/
     default-encoding: UTF-8
@@ -102,6 +85,7 @@ ukena:
 
   media:
     provider: ${MEDIA_PROVIDER:cloudinary}
+
   cloudinary:
     cloud-name: ${CLOUDINARY_CLOUD_NAME:}
     api-key: ${CLOUDINARY_API_KEY:}
@@ -114,10 +98,35 @@ ukena:
   email:
     from-address: ${EMAIL_FROM:mdaucodes@gmail.com}
     from-name: ${EMAIL_FROM_NAME:Ukena}
-    brevo-api-key: ${BREVO_API_KEY:}
+    brevo-api-key: ${BREVO_API_KEY}
     brevo-api-url: https://api.brevo.com/v3/smtp/email
-    use-brevo-api: ${USE_BREVO_API:true}
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+  payment:
+    provider: ${PAYMENT_PROVIDER:pesapal}
+    commission-rate: 0.15
+
+  pesapal:
+    consumer-key: ${PESAPAL_CONSUMER_KEY:}
+    consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
+    base-url: ${PESAPAL_BASE_URL:https://cybqa.pesapal.com/pesapalv3}
+    ipn-url: ${BACKEND_URL:http://localhost:8080}/api/payments/webhook
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  flutterwave:
+    secret-key: ${FLUTTERWAVE_SECRET_KEY:}
+    public-key: ${FLUTTERWAVE_PUBLIC_KEY:}
+    webhook-secret: ${FLUTTERWAVE_WEBHOOK_SECRET:}
+    base-url: https://api.flutterwave.com/v3
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    from-number: ${TWILIO_FROM_NUMBER:}
+    enabled: ${TWILIO_ENABLED:false}
 
 springdoc:
   swagger-ui:
@@ -152,29 +161,3 @@ resilience4j:
         limit-for-period: 20
         limit-refresh-period: 1m
         timeout-duration: 0s
-
-  payment:
-    provider: ${PAYMENT_PROVIDER:pesapal}
-    commission-rate: 0.15
-
-  pesapal:
-    consumer-key: ${PESAPAL_CONSUMER_KEY:}
-    consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
-    base-url: ${PESAPAL_BASE_URL:https://cybqa.pesapal.com/pesapalv3}
-    ipn-url: ${BACKEND_URL:http://localhost:8080}/api/payments/webhook
-    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
-    currency: GBP
-
-  flutterwave:
-    secret-key: ${FLUTTERWAVE_SECRET_KEY:}
-    public-key: ${FLUTTERWAVE_PUBLIC_KEY:}
-    webhook-secret: ${FLUTTERWAVE_WEBHOOK_SECRET:}
-    base-url: https://api.flutterwave.com/v3
-    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
-    currency: GBP
-
-  twilio:
-    account-sid: ${TWILIO_ACCOUNT_SID:}
-    auth-token: ${TWILIO_AUTH_TOKEN:}
-    from-number: ${TWILIO_FROM_NUMBER:}
-    enabled: ${TWILIO_ENABLED:false}
