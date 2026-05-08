@@ -1,53 +1,49 @@
 package com.mdau.ukena.notification;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import freemarker.template.Configuration;
 import freemarker.template.Template;
 import jakarta.annotation.PostConstruct;
+import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.ui.freemarker.FreeMarkerTemplateUtils;
-
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-
 @Slf4j
 @Service
 public class EmailServiceImpl implements EmailService {
-
+    private final JavaMailSender mailSender;
     private final ObjectMapper objectMapper;
     private final Configuration freemarkerConfig;
-
     @Value("${ukena.email.from-address}")
     private String fromAddress;
-
     @Value("${ukena.email.from-name}")
     private String fromName;
-
-    @Value("${ukena.email.brevo-api-key}")
+    @Value("${ukena.email.brevo-api-key:}")
     private String brevoApiKey;
-
     @Value("${ukena.email.brevo-api-url}")
     private String brevoApiUrl;
-
+    @Value("${ukena.email.use-brevo-api:true}")
+    private boolean useBrevoApi;
     @Value("${ukena.email.frontend-url}")
     private String frontendUrl;
-
     private OkHttpClient httpClient;
-
-    public EmailServiceImpl(ObjectMapper objectMapper,
+    public EmailServiceImpl(JavaMailSender mailSender,
+                            ObjectMapper objectMapper,
                             @Qualifier("freemarkerConfiguration") Configuration freemarkerConfig) {
+        this.mailSender = mailSender;
         this.objectMapper = objectMapper;
         this.freemarkerConfig = freemarkerConfig;
     }
-
     @PostConstruct
     public void init() {
         this.httpClient = new OkHttpClient.Builder()
@@ -55,14 +51,9 @@ public class EmailServiceImpl implements EmailService {
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
-
-        if (brevoApiKey == null || brevoApiKey.isBlank()) {
-            log.error("EMAIL MISCONFIGURED: BREVO_API_KEY is blank — emails will not be sent");
-        } else {
-            log.info("Email service ready — Brevo API, from: {} <{}>", fromName, fromAddress);
-        }
+        String method = (useBrevoApi && !brevoApiKey.isBlank()) ? "Brevo API" : "SMTP";
+        log.info("Email service ready — method: {}, from: {} <{}>", method, fromName, fromAddress);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendOrderConfirmation(
@@ -78,7 +69,6 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(buyerEmail, "Your Ukena order is confirmed — " + orderRef, "order-confirmation.ftl", model);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendNewOrderNotification(
@@ -93,7 +83,6 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(creatorEmail, "New order received — " + orderRef, "new-order-creator.ftl", model);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendApplicationReceived(
@@ -104,7 +93,6 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(email, "We received your application — " + applicationId, "application-received.ftl", model);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendCreatorWelcome(
@@ -119,7 +107,6 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(email, "Welcome to Ukena — your creator account is ready", "creator-welcome.ftl", model);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendPayoutConfirmation(
@@ -133,54 +120,58 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(email, "Your Ukena payout has been sent", "payout-confirmation.ftl", model);
     }
-
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendPasswordReset(
-            String email, String fullName, String resetLink) {
+            String email, String fullName, String otp) {
         Map<String, Object> model = new HashMap<>();
         model.put("name", fullName);
-        model.put("resetLink", resetLink);
+        model.put("otp", otp);
         model.put("baseUrl", frontendUrl);
         return send(email, "Reset your Ukena password", "password-reset.ftl", model);
     }
-
     @Override
     public boolean sendHtml(String toEmail, String subject,
                             String templateName, Map<String, Object> model) {
         try {
             Template template = freemarkerConfig.getTemplate(templateName);
             String html = FreeMarkerTemplateUtils.processTemplateIntoString(template, model);
-            sendViaBrevo(toEmail, subject, html);
+            if (useBrevoApi && !brevoApiKey.isBlank()) {
+                try {
+                    sendViaBrevo(toEmail, subject, html);
+                    log.debug("Email sent via Brevo to {}", toEmail);
+                    return true;
+                } catch (IOException e) {
+                    log.warn("Brevo API failed, falling back to SMTP: {}", e.getMessage());
+                }
+            }
+            sendViaSMTP(toEmail, subject, html);
+            log.debug("Email sent via SMTP to {}", toEmail);
             return true;
         } catch (Exception e) {
-            log.error("Email failed [{}] -> {}: {}", subject, toEmail, e.getMessage());
+            log.error("All email methods failed for {}: {}", toEmail, e.getMessage(), e);
             return false;
         }
     }
-
     private void sendViaBrevo(String toEmail, String subject, String html) throws IOException {
-        if (brevoApiKey == null || brevoApiKey.isBlank()) {
-            throw new IOException("BREVO_API_KEY is not configured");
-        }
-
+        Map<String, Object> sender = new HashMap<>();
+        sender.put("name", fromName);
+        sender.put("email", fromAddress);
+        Map<String, Object> recipient = new HashMap<>();
+        recipient.put("email", toEmail);
         Map<String, Object> payload = new HashMap<>();
-        payload.put("sender", Map.of("name", fromName, "email", fromAddress));
-        payload.put("to", new Object[]{Map.of("email", toEmail)});
+        payload.put("sender", sender);
+        payload.put("to", new Object[]{recipient});
         payload.put("subject", subject);
         payload.put("htmlContent", html);
-
-        RequestBody body = RequestBody.create(
-                objectMapper.writeValueAsString(payload),
-                MediaType.parse("application/json; charset=utf-8"));
-
+        String json = objectMapper.writeValueAsString(payload);
+        RequestBody body = RequestBody.create(json, MediaType.parse("application/json; charset=utf-8"));
         Request request = new Request.Builder()
                 .url(brevoApiUrl)
                 .addHeader("api-key", brevoApiKey)
                 .addHeader("Content-Type", "application/json")
                 .post(body)
                 .build();
-
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 String err = response.body() != null ? response.body().string() : "no body";
@@ -188,15 +179,27 @@ public class EmailServiceImpl implements EmailService {
             }
         }
     }
-
+    private void sendViaSMTP(String toEmail, String subject, String html) throws Exception {
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        helper.setFrom(fromAddress, fromName);
+        helper.setTo(toEmail);
+        helper.setSubject(subject);
+        helper.setText(html, true);
+        mailSender.send(message);
+    }
     private CompletableFuture<Boolean> send(String email, String subject,
                                             String template, Map<String, Object> model) {
-        boolean result = sendHtml(email, subject, template, model);
-        if (result) log.info("Email sent: {} -> {}", subject, email);
-        else log.error("Email failed: {} -> {}", subject, email);
-        return CompletableFuture.completedFuture(result);
+        try {
+            boolean result = sendHtml(email, subject, template, model);
+            if (result) log.info("Email sent: {} -> {}", subject, email);
+            else log.error("Email failed: {} -> {}", subject, email);
+            return CompletableFuture.completedFuture(result);
+        } catch (Exception e) {
+            log.error("Email exception: {} -> {}: {}", subject, email, e.getMessage());
+            return CompletableFuture.completedFuture(false);
+        }
     }
-
     private String formatPence(int pence) {
         return String.format("£%.2f", pence / 100.0);
     }

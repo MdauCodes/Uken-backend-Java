@@ -1,5 +1,4 @@
 package com.mdau.ukena.auth;
-
 import com.mdau.ukena.auth.dto.*;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.notification.EmailService;
@@ -16,7 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
-import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Service
@@ -65,49 +64,39 @@ public class AuthService {
         return toDto(user);
     }
 
-    /**
-     * Always returns 200 - never reveals whether the email exists.
-     */
     @Transactional
     public void forgotPassword(ForgotPasswordRequest req) {
         userRepository.findByEmail(req.email().toLowerCase().trim()).ifPresent(user -> {
-            // Invalidate any existing unused tokens for this user (housekeeping)
             resetTokenRepository.deleteExpired(Instant.now());
-
-            String token = UUID.randomUUID().toString();
+            String otp = String.format("%06d",
+                    ThreadLocalRandom.current().nextInt(0, 1_000_000));
             PasswordResetToken resetToken = PasswordResetToken.builder()
-                    .token(token)
+                    .token(otp)
                     .user(user)
-                    .expiresAt(Instant.now().plusSeconds(3600))
+                    .expiresAt(Instant.now().plusSeconds(600))
                     .used(false)
                     .build();
             resetTokenRepository.save(resetToken);
-
-            String resetLink = frontendUrl + "/reset-password?token=" + token;
-            emailService.sendPasswordReset(user.getEmail(), user.getFullName(), resetLink);
-            log.info("Password reset token issued for user {}", user.getId());
+            emailService.sendPasswordReset(user.getEmail(), user.getFullName(), otp);
+            log.info("OTP issued for user {}", user.getId());
         });
     }
 
     @Transactional
     public void resetPassword(ResetPasswordRequest req) {
         PasswordResetToken resetToken = resetTokenRepository.findByToken(req.token())
-                .orElseThrow(() -> ApiException.badRequest("Invalid or expired reset token"));
-
+                .orElseThrow(() -> ApiException.badRequest("Invalid or expired OTP"));
         if (resetToken.isUsed()) {
-            throw ApiException.badRequest("This reset link has already been used");
+            throw ApiException.badRequest("This OTP has already been used");
         }
         if (Instant.now().isAfter(resetToken.getExpiresAt())) {
-            throw ApiException.badRequest("This reset link has expired");
+            throw ApiException.badRequest("This OTP has expired");
         }
-
         User user = resetToken.getUser();
         user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
         userRepository.save(user);
-
         resetToken.setUsed(true);
         resetTokenRepository.save(resetToken);
-
         log.info("Password reset completed for user {}", user.getId());
     }
 
