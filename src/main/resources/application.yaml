@@ -124,6 +124,12 @@ ukena:
     provider: ${PAYMENT_PROVIDER:paystack}
     commission-rate: 0.15
 
+  paystack:
+    secret-key: ${PAYSTACK_SECRET_KEY:}
+    subaccount-code: ${PAYSTACK_SUBACCOUNT_CODE:}
+    callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    gbp-to-kes-rate: ${GBP_TO_KES_RATE:165.0}
+
   pesapal:
     consumer-key: ${PESAPAL_CONSUMER_KEY:}
     consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
@@ -179,8 +185,3 @@ resilience4j:
         limit-for-period: 20
         limit-refresh-period: 1m
         timeout-duration: 0s
-  paystack:
-    secret-key: ${PAYSTACK_SECRET_KEY:}
-    subaccount-code: ${PAYSTACK_SUBACCOUNT_CODE:}
-    callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
-    gbp-to-kes-rate: ${GBP_TO_KES_RATE:165.0}
