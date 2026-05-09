@@ -43,13 +43,10 @@ public class PaymentService {
     public PaymentInitResponse initiate(String displayId, CurrentUser currentUser) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
-
-        if (!order.getBuyer().getId().equals(currentUser.id())) {
+        if (!order.getBuyer().getId().equals(currentUser.id()))
             throw ApiException.forbidden("This order does not belong to you");
-        }
-        if (order.getStatus() != OrderStatus.PENDING) {
+        if (order.getStatus() != OrderStatus.PENDING)
             throw ApiException.badRequest("Order is not in PENDING state");
-        }
 
         String description = "Ukena order " + displayId + " - " +
                 order.getItems().stream()
@@ -59,7 +56,7 @@ public class PaymentService {
 
         PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
                 order.getId(), displayId, order.getTotalPence(),
-                "GBP", order.getBuyerEmail(), order.getBuyerFullName(), description));
+                "KES", order.getBuyerEmail(), order.getBuyerFullName(), description));
 
         order.setGatewayRef(result.gatewayRef());
         orderRepository.save(order);
@@ -67,52 +64,38 @@ public class PaymentService {
     }
 
     @Transactional
-    public void handlePesapalIpn(String trackingId, String merchantRef) {
-        if (trackingId == null || trackingId.isBlank()) {
-            log.warn("PesaPal IPN received with no orderTrackingId");
-            return;
-        }
-        if (merchantRef == null || merchantRef.isBlank()) {
-            log.warn("PesaPal IPN missing merchantRef, skipping");
-            return;
-        }
-        log.info("PesaPal IPN: trackingId={} merchantRef={}", trackingId, merchantRef);
-        orderRepository.findByDisplayId(merchantRef).ifPresentOrElse(order -> {
-            if (order.getStatus() == OrderStatus.PAID) {
-                log.info("Order {} already PAID, skipping", merchantRef);
-                return;
-            }
-            if (paymentGateway.verifyPayment(trackingId)) {
-                markOrderPaid(order, trackingId);
-            } else {
-                log.warn("PesaPal payment not completed for trackingId={}", trackingId);
-            }
-        }, () -> log.warn("PesaPal IPN: order not found for ref={}", merchantRef));
-    }
-
-    @Transactional
-    public void handleFlutterwaveWebhook(String payload, String signature) {
+    public void handlePaystackWebhook(String payload, String signature) {
         if (payload == null || payload.isBlank()) return;
         if (!paymentGateway.verifyWebhookSignature(payload, signature)) {
-            log.warn("Flutterwave webhook signature invalid - ignoring");
+            log.warn("Paystack webhook signature invalid - ignoring");
             return;
         }
         try {
             JsonNode node  = objectMapper.readTree(payload);
             String   event = node.path("event").asText();
-            if (!"charge.completed".equalsIgnoreCase(event)) return;
-            String status = node.path("data").path("status").asText();
-            String flwRef = node.path("data").path("flw_ref").asText();
-            String txRef  = node.path("data").path("tx_ref").asText();
-            if (!"successful".equalsIgnoreCase(status)) return;
-            String displayId = txRef.contains("-") ?
-                    txRef.substring(0, txRef.lastIndexOf('-')) : txRef;
-            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
-                if (order.getStatus() == OrderStatus.PAID) return;
-                if (paymentGateway.verifyPayment(flwRef)) markOrderPaid(order, flwRef);
-            }, () -> log.warn("Flutterwave webhook: order not found for txRef={}", txRef));
+            log.info("Paystack webhook event: {}", event);
+
+            if (!"charge.success".equalsIgnoreCase(event)) return;
+
+            String reference = node.path("data").path("reference").asText();
+            String status    = node.path("data").path("status").asText();
+
+            if (!"success".equalsIgnoreCase(status)) return;
+
+            orderRepository.findByDisplayId(reference).ifPresentOrElse(order -> {
+                if (order.getStatus() == OrderStatus.PAID) {
+                    log.info("Order {} already PAID, skipping", reference);
+                    return;
+                }
+                if (paymentGateway.verifyPayment(reference)) {
+                    markOrderPaid(order, reference);
+                } else {
+                    log.warn("Paystack verify failed for reference={}", reference);
+                }
+            }, () -> log.warn("Paystack webhook: order not found for ref={}", reference));
+
         } catch (Exception e) {
-            log.error("Flutterwave webhook parse error", e);
+            log.error("Paystack webhook parse error", e);
         }
     }
 

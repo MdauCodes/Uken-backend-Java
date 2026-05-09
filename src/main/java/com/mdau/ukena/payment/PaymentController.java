@@ -26,21 +26,12 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.ok(result, "Payment link generated"));
     }
 
-    @GetMapping("/webhook")
-    public ResponseEntity<String> webhookGet(
-            @RequestParam(value = "orderTrackingId",        required = false) String trackingId,
-            @RequestParam(value = "orderMerchantReference", required = false) String merchantRef,
-            @RequestParam(value = "orderNotificationType",  required = false) String notifType) {
-        paymentService.handlePesapalIpn(trackingId, merchantRef);
-        return ResponseEntity.ok("OK");
-    }
-
     @PostMapping("/webhook")
-    public ResponseEntity<String> webhookPost(
+    public ResponseEntity<String> webhook(
             HttpServletRequest httpReq,
             @RequestBody(required = false) String rawBody) {
-        String signature = httpReq.getHeader("verif-hash");
-        paymentService.handleFlutterwaveWebhook(rawBody, signature);
+        String signature = httpReq.getHeader("x-paystack-signature");
+        paymentService.handlePaystackWebhook(rawBody, signature);
         return ResponseEntity.ok("OK");
     }
 }
