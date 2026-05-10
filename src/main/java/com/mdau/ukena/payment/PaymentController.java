@@ -18,11 +18,13 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     @PostMapping("/initiate")
-    @PreAuthorize("hasRole('BUYER')")
+    //@PreAuthorize("hasRole('BUYER')")
     public ResponseEntity<ApiResponse<PaymentInitResponse>> initiate(
-            @Valid @RequestBody PaymentInitiateRequest req,
-            @AuthenticationPrincipal CurrentUser currentUser) {
-        PaymentInitResponse result = paymentService.initiate(req.orderId(), currentUser);
+            @Valid @RequestBody PaymentInitiateRequest req
+            //@AuthenticationPrincipal CurrentUser currentUser
+    ) {
+        CurrentUser tempUser = new CurrentUser(req.buyerId(), null, null, null);
+        PaymentInitResponse result = paymentService.initiate(req.orderId(), tempUser);
         return ResponseEntity.ok(ApiResponse.ok(result, "Payment link generated"));
     }
 

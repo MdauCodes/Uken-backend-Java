@@ -23,11 +23,10 @@ public class OrderController {
     private final UserRepository userRepository;
 
     @PostMapping("/orders")
-    @PreAuthorize("hasRole('BUYER')")
+    // @PreAuthorize("hasRole('BUYER')")  // TODO: re-enable auth
     public ResponseEntity<ApiResponse<OrderDto>> place(
-            @AuthenticationPrincipal CurrentUser currentUser,
             @Valid @RequestBody CreateOrderRequest req) {
-        User buyer = userRepository.findById(currentUser.id())
+        User buyer = userRepository.findById(req.buyerId())
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(

@@ -4,8 +4,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.util.List;
+import java.util.UUID;
 
 public record CreateOrderRequest(
         @NotEmpty List<@Valid OrderItemRequest> items,
-        @NotNull @Valid DeliveryDto delivery
+        @NotNull @Valid DeliveryDto delivery,
+        @NotNull UUID buyerId  // TODO: remove when auth is re-enabled
 ) {}
