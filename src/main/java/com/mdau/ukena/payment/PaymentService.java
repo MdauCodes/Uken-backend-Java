@@ -45,6 +45,8 @@ public class PaymentService {
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
         if (!order.getBuyer().getId().equals(currentUser.id()))
             throw ApiException.forbidden("This order does not belong to you");
+        if (order.getStatus() == OrderStatus.PAID)
+            throw ApiException.badRequest("Order is already paid");
         if (order.getStatus() != OrderStatus.PENDING)
             throw ApiException.badRequest("Order is not in PENDING state");
 
@@ -82,9 +84,17 @@ public class PaymentService {
 
             if (!"success".equalsIgnoreCase(status)) return;
 
-            orderRepository.findByDisplayId(reference).ifPresentOrElse(order -> {
+            // Reference format: UKN-202605-1254-{timestamp}
+            // Strip the timestamp suffix to get the display ID
+            String displayId = reference.contains("-")
+                    ? reference.substring(0, reference.lastIndexOf('-'))
+                    : reference;
+
+            log.info("Paystack webhook: ref={} displayId={}", reference, displayId);
+
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
                 if (order.getStatus() == OrderStatus.PAID) {
-                    log.info("Order {} already PAID, skipping", reference);
+                    log.info("Order {} already PAID, skipping", displayId);
                     return;
                 }
                 if (paymentGateway.verifyPayment(reference)) {
@@ -92,7 +102,7 @@ public class PaymentService {
                 } else {
                     log.warn("Paystack verify failed for reference={}", reference);
                 }
-            }, () -> log.warn("Paystack webhook: order not found for ref={}", reference));
+            }, () -> log.warn("Paystack webhook: order not found for displayId={}", displayId));
 
         } catch (Exception e) {
             log.error("Paystack webhook parse error", e);

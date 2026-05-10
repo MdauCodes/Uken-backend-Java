@@ -34,14 +34,16 @@ public class PaystackGateway implements PaymentGateway {
     @Override
     public PaymentInitResult initiatePayment(PaymentInitRequest req) {
         try {
-            // Convert GBP pence to KES kobo (KES * 100)
             long amountKobo = Math.round((req.amountPence() / 100.0) * gbpToKesRate * 100);
+
+            // Append timestamp to reference to avoid duplicate reference errors on retry
+            String reference = req.displayId() + "-" + System.currentTimeMillis();
 
             Map<String, Object> body = new HashMap<>();
             body.put("email",        req.buyerEmail());
             body.put("amount",       amountKobo);
             body.put("currency",     "KES");
-            body.put("reference",    req.displayId());
+            body.put("reference",    reference);
             body.put("callback_url", callbackUrl + "?ref=" + req.displayId());
             body.put("metadata", Map.of(
                     "display_id",   req.displayId(),
@@ -51,20 +53,20 @@ public class PaystackGateway implements PaymentGateway {
 
             if (subaccountCode != null && !subaccountCode.isBlank()) {
                 body.put("subaccount", subaccountCode);
-                body.put("bearer",     "account"); // platform bears Paystack fees
+                body.put("bearer",     "account");
             }
 
-            JsonNode resp = post("/transaction/initialize", body);
+            JsonNode resp    = post("/transaction/initialize", body);
             String authUrl   = resp.path("data").path("authorization_url").asText();
-            String reference = resp.path("data").path("reference").asText();
+            String paystackRef = resp.path("data").path("reference").asText();
 
             if (authUrl.isBlank()) {
                 log.error("Paystack init unexpected response: {}", resp);
                 throw ApiException.internalError("Payment initiation failed");
             }
 
-            log.info("Paystack payment initialized: ref={} url={}", reference, authUrl);
-            return new PaymentInitResult(authUrl, reference);
+            log.info("Paystack payment initialized: ref={} url={}", paystackRef, authUrl);
+            return new PaymentInitResult(authUrl, paystackRef);
 
         } catch (ApiException e) {
             throw e;
@@ -105,9 +107,7 @@ public class PaystackGateway implements PaymentGateway {
 
     @Override
     public PayoutResult initiateTransfer(PayoutRequest req) {
-        // Paystack split handles creator payouts automatically at charge time.
-        // Manual transfers via Paystack Transfers API can be added later.
-        log.info("Paystack payout queued for creator={} amountPence={}", 
+        log.info("Paystack payout queued for creator={} amountPence={}",
                 req.creatorId(), req.amountPence());
         return new PayoutResult(true, null,
                 "Payout handled via Paystack split at charge time");
