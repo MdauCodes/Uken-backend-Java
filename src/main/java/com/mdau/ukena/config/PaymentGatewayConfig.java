@@ -1,10 +1,9 @@
 package com.mdau.ukena.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mdau.ukena.payment.FlutterwaveGateway;
 import com.mdau.ukena.payment.PaymentGateway;
 import com.mdau.ukena.payment.PaystackGateway;
-import com.mdau.ukena.payment.PesapalGateway;
+import com.mdau.ukena.payment.StripeGateway;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,8 +13,20 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class PaymentGatewayConfig {
 
-    @Value("${ukena.payment.provider:paystack}")
+    @Value("${ukena.payment.provider:stripe}")
     private String provider;
+
+    @Value("${ukena.stripe.secret-key:}")
+    private String stripeSecretKey;
+
+    @Value("${ukena.stripe.webhook-secret:}")
+    private String stripeWebhookSecret;
+
+    @Value("${ukena.stripe.callback-url:http://localhost:5173/checkout/confirmation}")
+    private String stripeCallbackUrl;
+
+    @Value("${ukena.stripe.cancel-url:http://localhost:5173/checkout}")
+    private String stripeCancelUrl;
 
     @Value("${ukena.paystack.secret-key:}")
     private String paystackSecretKey;
@@ -37,13 +48,10 @@ public class PaymentGatewayConfig {
                 yield new PaystackGateway(objectMapper, paystackSecretKey,
                         paystackSubaccountCode, paystackCallbackUrl, gbpToKesRate);
             }
-            case "flutterwave" -> {
-                log.info("Payment gateway: Flutterwave");
-                yield new FlutterwaveGateway(objectMapper);
-            }
             default -> {
-                log.info("Payment gateway: PesaPal");
-                yield new PesapalGateway(objectMapper);
+                log.info("Payment gateway: Stripe (GBP)");
+                yield new StripeGateway(stripeSecretKey, stripeWebhookSecret,
+                        stripeCallbackUrl, stripeCancelUrl);
             }
         };
     }

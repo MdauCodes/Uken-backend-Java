@@ -121,8 +121,14 @@ ukena:
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
 
   payment:
-    provider: ${PAYMENT_PROVIDER:paystack}
+    provider: ${PAYMENT_PROVIDER:stripe}
     commission-rate: 0.15
+
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+    callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    cancel-url: ${FRONTEND_URL:http://localhost:5173}/checkout
 
   paystack:
     secret-key: ${PAYSTACK_SECRET_KEY:}

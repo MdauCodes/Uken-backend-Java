@@ -18,13 +18,11 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     @PostMapping("/initiate")
-    //@PreAuthorize("hasRole('BUYER')")
+    @PreAuthorize("hasRole('BUYER')")
     public ResponseEntity<ApiResponse<PaymentInitResponse>> initiate(
-            @Valid @RequestBody PaymentInitiateRequest req
-            //@AuthenticationPrincipal CurrentUser currentUser
-    ) {
-        CurrentUser tempUser = new CurrentUser(req.buyerId(), null, null, null);
-        PaymentInitResponse result = paymentService.initiate(req.orderId(), tempUser);
+            @Valid @RequestBody PaymentInitiateRequest req,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        PaymentInitResponse result = paymentService.initiate(req.orderId(), currentUser);
         return ResponseEntity.ok(ApiResponse.ok(result, "Payment link generated"));
     }
 
@@ -32,8 +30,11 @@ public class PaymentController {
     public ResponseEntity<String> webhook(
             HttpServletRequest httpReq,
             @RequestBody(required = false) String rawBody) {
-        String signature = httpReq.getHeader("x-paystack-signature");
-        paymentService.handlePaystackWebhook(rawBody, signature);
+        // Support both Stripe and Paystack webhook signatures
+        String stripeSignature   = httpReq.getHeader("Stripe-Signature");
+        String paystackSignature = httpReq.getHeader("x-paystack-signature");
+        String signature = stripeSignature != null ? stripeSignature : paystackSignature;
+        paymentService.handleWebhook(rawBody, signature);
         return ResponseEntity.ok("OK");
     }
 }

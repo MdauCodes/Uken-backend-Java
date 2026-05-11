@@ -145,6 +145,13 @@
             <version>4.12.0</version>
         </dependency>
 
+        <!-- Stripe SDK -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>26.3.0</version>
+        </dependency>
+
         <!-- Twilio SDK for SMS (UK buyers) -->
         <dependency>
             <groupId>com.twilio.sdk</groupId>
