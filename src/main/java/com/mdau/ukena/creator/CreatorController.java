@@ -1,5 +1,8 @@
 package com.mdau.ukena.creator;
 
+import com.mdau.ukena.admin.FeaturedSlot;
+import com.mdau.ukena.admin.FeaturedSlotRepository;
+import com.mdau.ukena.admin.dto.FeaturedSlotDto;
 import com.mdau.ukena.common.ApiResponse;
 import com.mdau.ukena.creator.dto.*;
 import com.mdau.ukena.security.CurrentUser;
@@ -12,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
@@ -20,6 +24,7 @@ import java.util.List;
 public class CreatorController {
 
     private final CreatorService creatorService;
+    private final FeaturedSlotRepository featuredSlotRepository;
 
     @GetMapping
     @RateLimiter(name = "public-api")
@@ -29,6 +34,21 @@ public class CreatorController {
             @RequestParam(required = false) String region) {
         return ResponseEntity.ok(ApiResponse.ok(
                 creatorService.list(craft, region)));
+    }
+
+    @GetMapping("/featured")
+    @RateLimiter(name = "public-api")
+    @Cacheable(value = "featured")
+    public ResponseEntity<ApiResponse<List<FeaturedSlotDto>>> featured() {
+        List<FeaturedSlotDto> slots = featuredSlotRepository.findAllByOrderByPositionAsc()
+                .stream()
+                .filter(s -> s.getCreator() != null)
+                .map(s -> new FeaturedSlotDto(
+                        s.getPosition(),
+                        s.getCreator().getId(),
+                        s.getProduct() != null ? s.getProduct().getId() : null))
+                .toList();
+        return ResponseEntity.ok(ApiResponse.ok(slots));
     }
 
     @GetMapping("/{id}")
@@ -50,7 +70,7 @@ public class CreatorController {
 
     @PutMapping("/me")
     @PreAuthorize("hasRole('CREATOR')")
-    @CacheEvict(value = {"creators", "creator"}, allEntries = true)
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
     public ResponseEntity<ApiResponse<CreatorDetail>> updateMe(
             @AuthenticationPrincipal CurrentUser currentUser,
             @Valid @RequestBody CreatorProfileUpdate req) {

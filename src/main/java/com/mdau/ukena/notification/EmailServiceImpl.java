@@ -1,4 +1,5 @@
 package com.mdau.ukena.notification;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import freemarker.template.Configuration;
 import freemarker.template.Template;
@@ -13,17 +14,21 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.ui.freemarker.FreeMarkerTemplateUtils;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+
 @Slf4j
 @Service
 public class EmailServiceImpl implements EmailService {
+
     private final JavaMailSender mailSender;
     private final ObjectMapper objectMapper;
     private final Configuration freemarkerConfig;
+
     @Value("${ukena.email.from-address}")
     private String fromAddress;
     @Value("${ukena.email.from-name}")
@@ -36,7 +41,9 @@ public class EmailServiceImpl implements EmailService {
     private boolean useBrevoApi;
     @Value("${ukena.email.frontend-url}")
     private String frontendUrl;
+
     private OkHttpClient httpClient;
+
     public EmailServiceImpl(JavaMailSender mailSender,
                             ObjectMapper objectMapper,
                             @Qualifier("freemarkerConfiguration") Configuration freemarkerConfig) {
@@ -44,6 +51,7 @@ public class EmailServiceImpl implements EmailService {
         this.objectMapper = objectMapper;
         this.freemarkerConfig = freemarkerConfig;
     }
+
     @PostConstruct
     public void init() {
         this.httpClient = new OkHttpClient.Builder()
@@ -52,8 +60,9 @@ public class EmailServiceImpl implements EmailService {
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
         String method = (useBrevoApi && !brevoApiKey.isBlank()) ? "Brevo API" : "SMTP";
-        log.info("Email service ready — method: {}, from: {} <{}>", method, fromName, fromAddress);
+        log.info("Email service ready - method: {}, from: {} <{}>", method, fromName, fromAddress);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendOrderConfirmation(
@@ -67,8 +76,10 @@ public class EmailServiceImpl implements EmailService {
         model.put("creatorNames", creatorNames);
         model.put("ordersUrl", frontendUrl + "/account/orders");
         model.put("baseUrl", frontendUrl);
-        return send(buyerEmail, "Your Ukena order is confirmed — " + orderRef, "order-confirmation.ftl", model);
+        return send(buyerEmail, "Your Ukena order is confirmed - " + orderRef,
+                "order-confirmation.ftl", model);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendNewOrderNotification(
@@ -81,8 +92,10 @@ public class EmailServiceImpl implements EmailService {
         model.put("quantity", quantity);
         model.put("ordersUrl", frontendUrl + "/dashboard/orders");
         model.put("baseUrl", frontendUrl);
-        return send(creatorEmail, "New order received — " + orderRef, "new-order-creator.ftl", model);
+        return send(creatorEmail, "New order received - " + orderRef,
+                "new-order-creator.ftl", model);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendApplicationReceived(
@@ -91,8 +104,10 @@ public class EmailServiceImpl implements EmailService {
         model.put("name", fullName);
         model.put("applicationId", applicationId);
         model.put("baseUrl", frontendUrl);
-        return send(email, "We received your application — " + applicationId, "application-received.ftl", model);
+        return send(email, "We received your application - " + applicationId,
+                "application-received.ftl", model);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendCreatorWelcome(
@@ -105,8 +120,10 @@ public class EmailServiceImpl implements EmailService {
         model.put("loginUrl", frontendUrl + "/signin");
         model.put("dashboardUrl", frontendUrl + "/dashboard");
         model.put("baseUrl", frontendUrl);
-        return send(email, "Welcome to Ukena — your creator account is ready", "creator-welcome.ftl", model);
+        return send(email, "Welcome to Ukena - your creator account is ready",
+                "creator-welcome.ftl", model);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendPayoutConfirmation(
@@ -118,8 +135,10 @@ public class EmailServiceImpl implements EmailService {
         model.put("currency", currency);
         model.put("dashboardUrl", frontendUrl + "/dashboard");
         model.put("baseUrl", frontendUrl);
-        return send(email, "Your Ukena payout has been sent", "payout-confirmation.ftl", model);
+        return send(email, "Your Ukena payout has been sent",
+                "payout-confirmation.ftl", model);
     }
+
     @Async("emailTaskExecutor")
     @Override
     public CompletableFuture<Boolean> sendPasswordReset(
@@ -130,6 +149,23 @@ public class EmailServiceImpl implements EmailService {
         model.put("baseUrl", frontendUrl);
         return send(email, "Reset your Ukena password", "password-reset.ftl", model);
     }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public CompletableFuture<Boolean> sendPaymentReminder(
+            String email, String fullName,
+            String orderRef, int totalPence,
+            String paymentLink) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("name", fullName);
+        model.put("orderRef", orderRef);
+        model.put("totalFormatted", formatPence(totalPence));
+        model.put("paymentLink", paymentLink);
+        model.put("baseUrl", frontendUrl);
+        return send(email, "Complete your Ukena order - " + orderRef,
+                "payment-reminder.ftl", model);
+    }
+
     @Override
     public boolean sendHtml(String toEmail, String subject,
                             String templateName, Map<String, Object> model) {
@@ -153,6 +189,7 @@ public class EmailServiceImpl implements EmailService {
             return false;
         }
     }
+
     private void sendViaBrevo(String toEmail, String subject, String html) throws IOException {
         Map<String, Object> sender = new HashMap<>();
         sender.put("name", fromName);
@@ -165,7 +202,8 @@ public class EmailServiceImpl implements EmailService {
         payload.put("subject", subject);
         payload.put("htmlContent", html);
         String json = objectMapper.writeValueAsString(payload);
-        RequestBody body = RequestBody.create(json, MediaType.parse("application/json; charset=utf-8"));
+        RequestBody body = RequestBody.create(json,
+                MediaType.parse("application/json; charset=utf-8"));
         Request request = new Request.Builder()
                 .url(brevoApiUrl)
                 .addHeader("api-key", brevoApiKey)
@@ -179,6 +217,7 @@ public class EmailServiceImpl implements EmailService {
             }
         }
     }
+
     private void sendViaSMTP(String toEmail, String subject, String html) throws Exception {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -188,18 +227,20 @@ public class EmailServiceImpl implements EmailService {
         helper.setText(html, true);
         mailSender.send(message);
     }
+
     private CompletableFuture<Boolean> send(String email, String subject,
                                             String template, Map<String, Object> model) {
         try {
             boolean result = sendHtml(email, subject, template, model);
             if (result) log.info("Email sent: {} -> {}", subject, email);
-            else log.error("Email failed: {} -> {}", subject, email);
+            else        log.error("Email failed: {} -> {}", subject, email);
             return CompletableFuture.completedFuture(result);
         } catch (Exception e) {
             log.error("Email exception: {} -> {}: {}", subject, email, e.getMessage());
             return CompletableFuture.completedFuture(false);
         }
     }
+
     private String formatPence(int pence) {
         return String.format("£%.2f", pence / 100.0);
     }

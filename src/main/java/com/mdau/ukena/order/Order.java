@@ -11,11 +11,12 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "orders", indexes = {
-        @Index(name = "idx_orders_display_id", columnList = "display_id"),
-        @Index(name = "idx_orders_buyer_id", columnList = "buyer_user_id"),
-        @Index(name = "idx_orders_status", columnList = "status"),
-        @Index(name = "idx_orders_created_at", columnList = "created_at"),
-        @Index(name = "idx_orders_buyer_created", columnList = "buyer_user_id,created_at")
+        @Index(name = "idx_orders_display_id",    columnList = "display_id"),
+        @Index(name = "idx_orders_buyer_id",      columnList = "buyer_user_id"),
+        @Index(name = "idx_orders_status",        columnList = "status"),
+        @Index(name = "idx_orders_created_at",    columnList = "created_at"),
+        @Index(name = "idx_orders_buyer_created", columnList = "buyer_user_id,created_at"),
+        @Index(name = "idx_orders_pending_reminder", columnList = "status,created_at,reminder_sent_at")
 })
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
@@ -60,6 +61,9 @@ public class Order {
 
     @Column(name = "paid_at")
     private Instant paidAt;
+
+    @Column(name = "reminder_sent_at")
+    private Instant reminderSentAt;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

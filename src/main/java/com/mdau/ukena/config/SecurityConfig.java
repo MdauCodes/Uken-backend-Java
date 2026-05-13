@@ -23,6 +23,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -70,15 +71,14 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/applications").permitAll()
                 .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/payments/webhook").permitAll()
+                .requestMatchers(HttpMethod.POST, "/payments/initiate").permitAll()
+                .requestMatchers(HttpMethod.POST, "/orders").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
                 .requestMatchers(HttpMethod.GET,
                         "/creators", "/creators/*",
                         "/products", "/products/*",
                         "/reviews/product/*",
                         "/search").permitAll()
-                    .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()
-                    .requestMatchers(HttpMethod.POST, "/payments/initiate").permitAll() // TODO: re-enable auth
-                    .requestMatchers(HttpMethod.POST, "/orders").permitAll()            // TODO: re-enable auth
-
                 .requestMatchers(
                         "/actuator/health",
                         "/v3/api-docs/**",

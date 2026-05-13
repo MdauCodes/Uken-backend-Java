@@ -1,11 +1,11 @@
 package com.mdau.ukena.order;
 
+import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.common.ApiResponse;
 import com.mdau.ukena.order.dto.*;
 import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
-import com.mdau.ukena.common.ApiException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
@@ -23,15 +24,33 @@ public class OrderController {
     private final UserRepository userRepository;
 
     @PostMapping("/orders")
-    // @PreAuthorize("hasRole('BUYER')")  // TODO: re-enable auth
     public ResponseEntity<ApiResponse<OrderDto>> place(
-            @Valid @RequestBody CreateOrderRequest req) {
-        User buyer = userRepository.findById(req.buyerId())
-                .orElseThrow(() -> ApiException.notFound("User not found"));
+            @Valid @RequestBody CreateOrderRequest req,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+
+        User buyer = null;
+
+        if (currentUser != null) {
+            buyer = userRepository.findById(currentUser.id())
+                    .orElseThrow(() -> ApiException.notFound("User not found"));
+        } else if (req.guestEmail() != null && req.guestFullName() != null) {
+            // guest — buyer stays null, email/name carried in request
+        } else {
+            throw ApiException.badRequest("Provide guestEmail and guestFullName for guest checkout, or log in");
+        }
+
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(
                         orderService.place(buyer, req),
                         "Order placed successfully"));
+    }
+
+    @GetMapping("/orders/track")
+    public ResponseEntity<ApiResponse<OrderDto>> track(
+            @RequestParam String displayId,
+            @RequestParam String email) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.trackGuestOrder(displayId, email)));
     }
 
     @GetMapping("/orders/me")

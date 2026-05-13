@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -33,6 +34,9 @@ public class OrderService {
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
+        String buyerEmail    = buyer != null ? buyer.getEmail()    : req.guestEmail().toLowerCase().trim();
+        String buyerFullName = buyer != null ? buyer.getFullName() : req.guestFullName().trim();
+
         List<OrderItem> items = req.items().stream().map(itemReq -> {
             Product product = productRepository.findActiveById(itemReq.productId())
                     .orElseThrow(() -> ApiException.notFound(
@@ -63,8 +67,8 @@ public class OrderService {
         Order order = Order.builder()
                 .displayId(generateDisplayId())
                 .buyer(buyer)
-                .buyerFullName(buyer.getFullName())
-                .buyerEmail(buyer.getEmail())
+                .buyerFullName(buyerFullName)
+                .buyerEmail(buyerEmail)
                 .totalPence(totalPence)
                 .delivery(toJson(req.delivery()))
                 .status(OrderStatus.PENDING)
@@ -78,8 +82,27 @@ public class OrderService {
         return toDto(saved);
     }
 
+    @Transactional(readOnly = true)
+    public OrderDto trackGuestOrder(String displayId, String email) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        if (!order.getBuyerEmail().equalsIgnoreCase(email.trim())) {
+            throw ApiException.notFound("Order not found");
+        }
+        return toDto(order);
+    }
+
+    @Transactional
+    public void linkGuestOrders(String email, User user) {
+        List<Order> guestOrders = orderRepository
+                .findByBuyerEmailIgnoreCaseAndBuyerIsNull(email);
+        if (guestOrders.isEmpty()) return;
+        guestOrders.forEach(o -> o.setBuyer(user));
+        orderRepository.saveAll(guestOrders);
+        log.info("Linked {} guest orders to new user {}", guestOrders.size(), user.getId());
+    }
+
     private void sendOrderEmails(Order order) {
-        // 1. Confirmation to buyer
         String creatorNames = order.getItems().stream()
                 .map(OrderItem::getCreatorFullName)
                 .distinct()
@@ -92,7 +115,6 @@ public class OrderService {
                 order.getTotalPence(),
                 creatorNames);
 
-        // 2. Notification to each unique creator via UserRepository lookup
         order.getItems().stream()
                 .filter(i -> i.getCreator() != null)
                 .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
@@ -106,8 +128,7 @@ public class OrderService {
                                     first.getProductName(),
                                     creatorItems.stream()
                                             .mapToInt(OrderItem::getQuantity).sum()),
-                            () -> log.warn("No user account found for creatorId={}",
-                                    creatorId));
+                            () -> log.warn("No user account found for creatorId={}", creatorId));
                 });
     }
 

@@ -1,7 +1,9 @@
 package com.mdau.ukena.auth;
+
 import com.mdau.ukena.auth.dto.*;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.OrderService;
 import com.mdau.ukena.security.JwtService;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
@@ -14,6 +16,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.Instant;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -28,6 +31,7 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
     private final PasswordResetTokenRepository resetTokenRepository;
+    private final OrderService orderService;
 
     @Value("${ukena.email.frontend-url:http://localhost:5173}")
     private String frontendUrl;
@@ -44,6 +48,10 @@ public class AuthService {
                 .role(UserRole.ROLE_BUYER)
                 .build();
         userRepository.save(user);
+
+        // Link any guest orders placed with this email
+        orderService.linkGuestOrders(user.getEmail(), user);
+
         return new AuthResponse(jwtService.issue(user), toDto(user));
     }
 

@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -46,7 +47,13 @@ public class PaymentService {
     public PaymentInitResponse initiate(String displayId, CurrentUser currentUser) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
-        if (!order.getBuyer().getId().equals(currentUser.id()))
+
+        // Logged-in buyer: check by user ID. Guest: check by email.
+        boolean authorized = order.getBuyer() != null
+                ? order.getBuyer().getId().equals(currentUser.id())
+                : order.getBuyerEmail().equalsIgnoreCase(currentUser.email());
+
+        if (!authorized)
             throw ApiException.forbidden("This order does not belong to you");
         if (order.getStatus() == OrderStatus.PAID)
             throw ApiException.badRequest("Order is already paid");
