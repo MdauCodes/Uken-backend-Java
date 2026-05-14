@@ -18,7 +18,7 @@ public class CloudinaryController {
 
     private final CloudinaryService cloudinaryService;
 
-    // Sign upload — creator or admin gets a signed URL to upload directly
+    // Sign upload â€” creator or admin gets a signed URL to upload directly
     // from the frontend (avoids routing the file through our server)
     @PostMapping("/sign")
     @PreAuthorize("hasAnyRole('CREATOR','ADMIN','ROLE_SUPPORT')")
@@ -28,7 +28,7 @@ public class CloudinaryController {
                 cloudinaryService.signUpload(request)));
     }
 
-    // Server-side upload — for cases where frontend sends file to us
+    // Server-side upload â€” for cases where frontend sends file to us
     @PostMapping(value = "/upload",
                  consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
@@ -39,7 +39,7 @@ public class CloudinaryController {
                 cloudinaryService.upload(file, folder)));
     }
 
-    // Delete by publicId — admin or creator (frontend passes publicId)
+    // Delete by publicId â€” admin or creator (frontend passes publicId)
     @DeleteMapping("/{publicId}")
     @PreAuthorize("hasAnyRole('CREATOR','ADMIN')")
     public ResponseEntity<ApiResponse<String>> delete(
