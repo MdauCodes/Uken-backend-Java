@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -204,5 +205,47 @@ public class OrderService {
                 productsTotalPence, o.getShippingPence(), o.getTotalPence(),
                 new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
                 items, parseDelivery(o.getDelivery()));
+    }
+
+
+    @Transactional
+    public OrderDto adminUpdateStatus(String displayId, UpdateStatusRequest req) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        OrderStatus next = parseStatus(req.status());
+        validateAdminTransition(order.getStatus(), next);
+        order.setStatus(next);
+        Order saved = orderRepository.save(order);
+        emailService.sendOrderStatusUpdate(
+                saved.getBuyerEmail(), saved.getBuyerFullName(),
+                saved.getDisplayId(), next.name());
+        return toDto(saved);
+    }
+
+    @Transactional
+    public List<OrderDto> adminBulkUpdateStatus(BulkStatusUpdateRequest req) {
+        OrderStatus next = parseStatus(req.status());
+        List<OrderDto> results = new ArrayList<>();
+        for (String displayId : req.displayIds()) {
+            Order order = orderRepository.findByDisplayId(displayId)
+                    .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
+            validateAdminTransition(order.getStatus(), next);
+            order.setStatus(next);
+            Order saved = orderRepository.save(order);
+            emailService.sendOrderStatusUpdate(
+                    saved.getBuyerEmail(), saved.getBuyerFullName(),
+                    saved.getDisplayId(), next.name());
+            results.add(toDto(saved));
+        }
+        return results;
+    }
+
+    private void validateAdminTransition(OrderStatus current, OrderStatus next) {
+        if (current == OrderStatus.CANCELLED)
+            throw ApiException.badRequest("Cannot update a cancelled order");
+        if (next == OrderStatus.PENDING)
+            throw ApiException.badRequest("Cannot revert to PENDING");
+        if (current == OrderStatus.DELIVERED && next != OrderStatus.CANCELLED)
+            throw ApiException.badRequest("Order already delivered");
     }
 }

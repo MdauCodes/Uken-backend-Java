@@ -93,4 +93,21 @@ public class OrderController {
         return ResponseEntity.ok(ApiResponse.ok(
                 orderService.adminRefund(displayId)));
     }
+
+    @PatchMapping("/admin/orders/{displayId}/status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<OrderDto>> adminUpdateStatus(
+            @PathVariable String displayId,
+            @Valid @RequestBody UpdateStatusRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.adminUpdateStatus(displayId, req)));
+    }
+
+    @PatchMapping("/admin/orders/bulk-status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> adminBulkUpdateStatus(
+            @Valid @RequestBody BulkStatusUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.adminBulkUpdateStatus(req)));
+    }
 }

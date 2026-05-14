@@ -34,4 +34,8 @@ public interface EmailService {
 
     boolean sendHtml(String toEmail, String subject,
                      String templateName, Map<String, Object> model);
+
+    CompletableFuture<Boolean> sendOrderStatusUpdate(
+            String buyerEmail, String buyerName,
+            String orderRef, String newStatus);
 }

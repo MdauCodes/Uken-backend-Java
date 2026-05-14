@@ -241,6 +241,32 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
+    @Async("emailTaskExecutor")
+    @Override
+    public CompletableFuture<Boolean> sendOrderStatusUpdate(
+            String buyerEmail, String buyerName,
+            String orderRef, String newStatus) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("name", buyerName);
+        model.put("orderRef", orderRef);
+        model.put("newStatus", newStatus);
+        model.put("statusLabel", toStatusLabel(newStatus));
+        model.put("trackUrl", frontendUrl + "/orders/track?displayId=" + orderRef + "&email=" + buyerEmail);
+        model.put("baseUrl", frontendUrl);
+        return send(buyerEmail, "Your order " + orderRef + " has been updated",
+                "order-status-update.ftl", model);
+    }
+
+    private String toStatusLabel(String status) {
+        return switch (status.toUpperCase()) {
+            case "PREPARING"  -> "Your maker is preparing it";
+            case "SHIPPED"    -> "Your order is on its way";
+            case "DELIVERED"  -> "Your order has been delivered";
+            case "CANCELLED"  -> "Your order has been cancelled";
+            default           -> status;
+        };
+    }
+
     private String formatPence(int pence) {
         return String.format("£%.2f", pence / 100.0);
     }
