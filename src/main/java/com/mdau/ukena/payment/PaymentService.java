@@ -108,7 +108,6 @@ public class PaymentService {
 
         } catch (Exception e) {
             log.error("Stripe webhook parse error", e);
-            throw new RuntimeException("Webhook processing failed", e);
         }
     }
 
@@ -149,7 +148,6 @@ public class PaymentService {
 
         } catch (Exception e) {
             log.error("Paystack webhook parse error", e);
-            throw new RuntimeException("Webhook processing failed", e);
         }
     }
 
@@ -160,20 +158,18 @@ public class PaymentService {
         order.setPaidAt(Instant.now());
         orderRepository.save(order);
 
-        // 2. Credit earnings ledger — now includes creatorId so DB constraint is satisfied
+        // 2. Credit earnings ledger
         creditLedger(order);
 
-        // 3. Update payout balance — runs in its own REQUIRES_NEW transaction
-        //    so any optimistic lock failure there does NOT roll back steps 1 & 2
+        // 3. Update payout balance — isolated transaction, failure won't roll back steps 1 & 2
         try {
             payoutUpdateService.updatePayoutRecord(order);
         } catch (Exception e) {
-            // Payout balance update is best-effort — order is already PAID, don't roll back
-            log.error("Payout balance update failed for order={} — manual reconciliation needed: {}",
+            log.error("Payout balance update failed for order={} — needs manual reconciliation: {}",
                     order.getDisplayId(), e.getMessage());
         }
 
-        // 4. Send buyer confirmation email
+        // 4. Notify buyer
         emailService.sendOrderConfirmation(
                 order.getBuyerEmail(), order.getBuyerFullName(),
                 order.getDisplayId(), order.getTotalPence(),
@@ -181,7 +177,7 @@ public class PaymentService {
                         .map(OrderItem::getCreatorFullName).distinct()
                         .collect(Collectors.joining(", ")));
 
-        // 5. Notify creators — fires only after confirmed payment
+        // 5. Notify creators
         sendCreatorOrderNotifications(order);
 
         log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
@@ -195,13 +191,13 @@ public class PaymentService {
                     .multiply(BigDecimal.ONE.subtract(commissionRate))
                     .setScale(0, RoundingMode.HALF_UP)
                     .intValue();
-            // ── FIX: creatorId now set — was null before, causing NOT NULL DB violation ──
             ledgerRepository.save(EarningsLedger.builder()
-                    .artisanProfileId(item.getCreator().getId())
                     .creatorId(item.getCreator().getId())
+                    .artisanProfileId(item.getCreator().getId())
                     .orderId(order.getId())
                     .orderItemId(item.getId())
                     .grossPence(gross)
+                    .amountPence(net)   // amount_pence = net creator earnings
                     .commissionRate(commissionRate)
                     .netPence(net)
                     .status(LedgerStatus.PENDING)

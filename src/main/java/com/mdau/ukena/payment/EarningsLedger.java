@@ -3,6 +3,7 @@ package com.mdau.ukena.payment;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -21,14 +22,13 @@ public class EarningsLedger {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "artisan_profile_id", nullable = false, length = 80)
-    private String artisanProfileId;
-
-    // ── FIX: the DB table has a NOT NULL creator_id column that was never mapped ──
     @Column(name = "creator_id", nullable = false, length = 80)
     private String creatorId;
 
-    @Column(name = "order_id", nullable = false)
+    @Column(name = "artisan_profile_id", length = 80)
+    private String artisanProfileId;
+
+    @Column(name = "order_id")
     private UUID orderId;
 
     @Column(name = "order_item_id", nullable = false)
@@ -36,6 +36,10 @@ public class EarningsLedger {
 
     @Column(name = "gross_pence", nullable = false)
     private int grossPence;
+
+    // amount_pence = net_pence — kept as a separate column to match the DB schema
+    @Column(name = "amount_pence", nullable = false)
+    private int amountPence;
 
     @Column(name = "commission_rate", nullable = false, precision = 5, scale = 4)
     private BigDecimal commissionRate;
@@ -51,4 +55,8 @@ public class EarningsLedger {
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private Instant updatedAt;
 }
