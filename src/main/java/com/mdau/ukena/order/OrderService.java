@@ -2,6 +2,8 @@ package com.mdau.ukena.order;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.delivery.DeliveryZone;
+import com.mdau.ukena.delivery.DeliveryZoneService;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.order.dto.*;
 import com.mdau.ukena.product.Product;
@@ -26,29 +28,31 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final OrderRepository   orderRepository;
-    private final ProductRepository productRepository;
-    private final UserRepository    userRepository;
-    private final ObjectMapper      objectMapper;
-    private final EmailService      emailService;
+    private final OrderRepository    orderRepository;
+    private final ProductRepository  productRepository;
+    private final UserRepository     userRepository;
+    private final DeliveryZoneService deliveryZoneService;
+    private final ObjectMapper       objectMapper;
+    private final EmailService       emailService;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
         String buyerEmail    = buyer != null ? buyer.getEmail()    : req.guestEmail().toLowerCase().trim();
         String buyerFullName = buyer != null ? buyer.getFullName() : req.guestFullName().trim();
 
+        // Validate delivery zone server-side
+        DeliveryZone zone = deliveryZoneService.getActiveById(req.deliveryZoneId());
+
         List<OrderItem> items = req.items().stream().map(itemReq -> {
             Product product = productRepository.findActiveById(itemReq.productId())
                     .orElseThrow(() -> ApiException.notFound(
                             "Product not found: " + itemReq.productId()));
-
             if (product.getStatus() != ProductStatus.ACTIVE) {
                 throw ApiException.badRequest(
                         product.getStatus() == ProductStatus.OUT_OF_STOCK
                                 ? product.getName() + " is currently out of stock"
                                 : product.getName() + " is not available for purchase");
             }
-
             return OrderItem.builder()
                     .product(product)
                     .creator(product.getCreator())
@@ -61,14 +65,18 @@ public class OrderService {
                     .build();
         }).toList();
 
-        int totalPence = items.stream()
+        int productsTotalPence = items.stream()
                 .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
+        int shippingPence = zone.getShippingPence();
+        int totalPence    = productsTotalPence + shippingPence;
 
         Order order = Order.builder()
                 .displayId(generateDisplayId())
                 .buyer(buyer)
                 .buyerFullName(buyerFullName)
                 .buyerEmail(buyerEmail)
+                .shippingPence(shippingPence)
+                .deliveryZoneId(zone.getId())
                 .totalPence(totalPence)
                 .delivery(toJson(req.delivery()))
                 .status(OrderStatus.PENDING)
@@ -86,9 +94,8 @@ public class OrderService {
     public OrderDto trackGuestOrder(String displayId, String email) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found"));
-        if (!order.getBuyerEmail().equalsIgnoreCase(email.trim())) {
+        if (!order.getBuyerEmail().equalsIgnoreCase(email.trim()))
             throw ApiException.notFound("Order not found");
-        }
         return toDto(order);
     }
 
@@ -104,17 +111,11 @@ public class OrderService {
 
     private void sendOrderEmails(Order order) {
         String creatorNames = order.getItems().stream()
-                .map(OrderItem::getCreatorFullName)
-                .distinct()
+                .map(OrderItem::getCreatorFullName).distinct()
                 .collect(Collectors.joining(", "));
-
         emailService.sendOrderConfirmation(
-                order.getBuyerEmail(),
-                order.getBuyerFullName(),
-                order.getDisplayId(),
-                order.getTotalPence(),
-                creatorNames);
-
+                order.getBuyerEmail(), order.getBuyerFullName(),
+                order.getDisplayId(), order.getTotalPence(), creatorNames);
         order.getItems().stream()
                 .filter(i -> i.getCreator() != null)
                 .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
@@ -122,13 +123,10 @@ public class OrderService {
                     OrderItem first = creatorItems.get(0);
                     userRepository.findByCreatorId(creatorId).ifPresentOrElse(
                             user -> emailService.sendNewOrderNotification(
-                                    user.getEmail(),
-                                    user.getFullName(),
-                                    order.getDisplayId(),
-                                    first.getProductName(),
-                                    creatorItems.stream()
-                                            .mapToInt(OrderItem::getQuantity).sum()),
-                            () -> log.warn("No user account found for creatorId={}", creatorId));
+                                    user.getEmail(), user.getFullName(),
+                                    order.getDisplayId(), first.getProductName(),
+                                    creatorItems.stream().mapToInt(OrderItem::getQuantity).sum()),
+                            () -> log.warn("No user found for creatorId={}", creatorId));
                 });
     }
 
@@ -209,6 +207,8 @@ public class OrderService {
     }
 
     OrderDto toDto(Order o) {
+        int productsTotalPence = o.getItems().stream()
+                .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
         List<OrderItemDto> items = o.getItems().stream().map(i ->
                 new OrderItemDto(
                         i.getProduct() != null ? i.getProduct().getId() : null,
@@ -218,8 +218,9 @@ public class OrderService {
                                 i.getCreator() != null ? i.getCreator().getId() : null,
                                 i.getCreatorFullName(), i.getCreatorRegion()))
         ).toList();
-        return new OrderDto(o.getDisplayId(), o.getCreatedAt(),
-                o.getStatus().name(), o.getTotalPence(),
+        return new OrderDto(
+                o.getDisplayId(), o.getCreatedAt(), o.getStatus().name(),
+                productsTotalPence, o.getShippingPence(), o.getTotalPence(),
                 new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
                 items, parseDelivery(o.getDelivery()));
     }

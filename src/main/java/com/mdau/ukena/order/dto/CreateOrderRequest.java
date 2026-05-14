@@ -9,6 +9,7 @@ import java.util.UUID;
 public record CreateOrderRequest(
         @NotEmpty List<@Valid OrderItemRequest> items,
         @NotNull @Valid DeliveryDto delivery,
+        @NotNull UUID deliveryZoneId,
         UUID buyerId,
         String guestEmail,
         String guestFullName
