@@ -24,6 +24,10 @@ public class EarningsLedger {
     @Column(name = "artisan_profile_id", nullable = false, length = 80)
     private String artisanProfileId;
 
+    // ── FIX: the DB table has a NOT NULL creator_id column that was never mapped ──
+    @Column(name = "creator_id", nullable = false, length = 80)
+    private String creatorId;
+
     @Column(name = "order_id", nullable = false)
     private UUID orderId;
 

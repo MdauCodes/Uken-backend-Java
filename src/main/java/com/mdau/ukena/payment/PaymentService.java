@@ -57,11 +57,7 @@ public class PaymentService {
         if (order.getStatus() != OrderStatus.PENDING)
             throw ApiException.badRequest("Order is not in PENDING state");
 
-        String description = "Ukena order " + displayId + " - " +
-                order.getItems().stream()
-                        .map(OrderItem::getProductName)
-                        .distinct()
-                        .collect(Collectors.joining(", "));
+        String description = "Complete your Ukena order " + displayId;
 
         PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
                 order.getId(), displayId, order.getTotalPence(),
@@ -88,8 +84,8 @@ public class PaymentService {
             return;
         }
         try {
-            JsonNode node  = objectMapper.readTree(payload);
-            String   event = node.path("type").asText();
+            JsonNode node    = objectMapper.readTree(payload);
+            String   event   = node.path("type").asText();
             log.info("Stripe webhook event: {}", event);
 
             if (!"checkout.session.completed".equalsIgnoreCase(event)) return;
@@ -112,6 +108,7 @@ public class PaymentService {
 
         } catch (Exception e) {
             log.error("Stripe webhook parse error", e);
+            throw new RuntimeException("Webhook processing failed", e);
         }
     }
 
@@ -152,21 +149,29 @@ public class PaymentService {
 
         } catch (Exception e) {
             log.error("Paystack webhook parse error", e);
+            throw new RuntimeException("Webhook processing failed", e);
         }
     }
 
     private void markOrderPaid(Order order, String gatewayRef) {
-        // 1. Mark order PAID and persist — this must succeed first
+        // 1. Mark order PAID
         order.setStatus(OrderStatus.PAID);
         order.setGatewayRef(gatewayRef);
         order.setPaidAt(Instant.now());
         orderRepository.save(order);
 
-        // 2. Credit earnings ledger (same transaction — safe, no optimistic locking)
+        // 2. Credit earnings ledger — now includes creatorId so DB constraint is satisfied
         creditLedger(order);
 
-        // 3. Update payout balance — isolated REQUIRES_NEW transaction, won't poison this one
-        payoutUpdateService.updatePayoutRecord(order);
+        // 3. Update payout balance — runs in its own REQUIRES_NEW transaction
+        //    so any optimistic lock failure there does NOT roll back steps 1 & 2
+        try {
+            payoutUpdateService.updatePayoutRecord(order);
+        } catch (Exception e) {
+            // Payout balance update is best-effort — order is already PAID, don't roll back
+            log.error("Payout balance update failed for order={} — manual reconciliation needed: {}",
+                    order.getDisplayId(), e.getMessage());
+        }
 
         // 4. Send buyer confirmation email
         emailService.sendOrderConfirmation(
@@ -176,7 +181,7 @@ public class PaymentService {
                         .map(OrderItem::getCreatorFullName).distinct()
                         .collect(Collectors.joining(", ")));
 
-        // 5. Send creator new-order notification — only fires after confirmed payment
+        // 5. Notify creators — fires only after confirmed payment
         sendCreatorOrderNotifications(order);
 
         log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
@@ -186,13 +191,14 @@ public class PaymentService {
         for (OrderItem item : order.getItems()) {
             if (item.getCreator() == null) continue;
             int gross = item.getPricePence() * item.getQuantity();
-            // Creator earns 60% — Ukena takes 40% commission
             int net = new BigDecimal(gross)
                     .multiply(BigDecimal.ONE.subtract(commissionRate))
                     .setScale(0, RoundingMode.HALF_UP)
                     .intValue();
+            // ── FIX: creatorId now set — was null before, causing NOT NULL DB violation ──
             ledgerRepository.save(EarningsLedger.builder()
                     .artisanProfileId(item.getCreator().getId())
+                    .creatorId(item.getCreator().getId())
                     .orderId(order.getId())
                     .orderItemId(item.getId())
                     .grossPence(gross)
