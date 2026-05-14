@@ -21,7 +21,7 @@ public class CloudinaryController {
     // Sign upload â€” creator or admin gets a signed URL to upload directly
     // from the frontend (avoids routing the file through our server)
     @PostMapping("/sign")
-    @PreAuthorize("hasAnyRole('CREATOR','ADMIN','ROLE_SUPPORT')")
+//    @PreAuthorize("hasAnyRole('CREATOR','ADMIN','ROLE_SUPPORT')")
     public ResponseEntity<ApiResponse<SignResponse>> sign(
             @Valid @RequestBody SignRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(
@@ -31,7 +31,7 @@ public class CloudinaryController {
     // Server-side upload â€” for cases where frontend sends file to us
     @PostMapping(value = "/upload",
                  consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("isAuthenticated()")
+//    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<CloudinaryService.UploadResult>> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(defaultValue = "ukena/uploads") String folder) {
