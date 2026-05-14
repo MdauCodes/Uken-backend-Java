@@ -2,16 +2,14 @@ package com.mdau.ukena.payment;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mdau.ukena.admin.PayoutRecord;
-import com.mdau.ukena.admin.PayoutRepository;
 import com.mdau.ukena.common.ApiException;
-import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.order.Order;
 import com.mdau.ukena.order.OrderItem;
 import com.mdau.ukena.order.OrderRepository;
 import com.mdau.ukena.order.OrderStatus;
 import com.mdau.ukena.security.CurrentUser;
+import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,12 +30,12 @@ public class PaymentService {
     private final PaymentGateway           paymentGateway;
     private final OrderRepository          orderRepository;
     private final EarningsLedgerRepository ledgerRepository;
-    private final PayoutRepository         payoutRepository;
-    private final CreatorRepository        creatorRepository;
+    private final PayoutUpdateService      payoutUpdateService;
+    private final UserRepository           userRepository;
     private final EmailService             emailService;
     private final ObjectMapper             objectMapper;
 
-    @Value("${ukena.payment.commission-rate:0.15}")
+    @Value("${ukena.payment.commission-rate:0.40}")
     private BigDecimal commissionRate;
 
     @Value("${ukena.payment.provider:stripe}")
@@ -48,7 +46,6 @@ public class PaymentService {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
 
-        // Logged-in buyer: check by user ID. Guest: check by email.
         boolean authorized = order.getBuyer() != null
                 ? order.getBuyer().getId().equals(currentUser.id())
                 : order.getBuyerEmail().equalsIgnoreCase(currentUser.email());
@@ -62,9 +59,9 @@ public class PaymentService {
 
         String description = "Ukena order " + displayId + " - " +
                 order.getItems().stream()
-                     .map(OrderItem::getProductName)
-                     .distinct()
-                     .collect(Collectors.joining(", "));
+                        .map(OrderItem::getProductName)
+                        .distinct()
+                        .collect(Collectors.joining(", "));
 
         PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
                 order.getId(), displayId, order.getTotalPence(),
@@ -159,18 +156,29 @@ public class PaymentService {
     }
 
     private void markOrderPaid(Order order, String gatewayRef) {
+        // 1. Mark order PAID and persist — this must succeed first
         order.setStatus(OrderStatus.PAID);
         order.setGatewayRef(gatewayRef);
         order.setPaidAt(Instant.now());
         orderRepository.save(order);
+
+        // 2. Credit earnings ledger (same transaction — safe, no optimistic locking)
         creditLedger(order);
-        updatePayoutRecord(order);
-        String creatorNames = order.getItems().stream()
-                .map(OrderItem::getCreatorFullName).distinct()
-                .collect(Collectors.joining(", "));
+
+        // 3. Update payout balance — isolated REQUIRES_NEW transaction, won't poison this one
+        payoutUpdateService.updatePayoutRecord(order);
+
+        // 4. Send buyer confirmation email
         emailService.sendOrderConfirmation(
                 order.getBuyerEmail(), order.getBuyerFullName(),
-                order.getDisplayId(), order.getTotalPence(), creatorNames);
+                order.getDisplayId(), order.getTotalPence(),
+                order.getItems().stream()
+                        .map(OrderItem::getCreatorFullName).distinct()
+                        .collect(Collectors.joining(", ")));
+
+        // 5. Send creator new-order notification — only fires after confirmed payment
+        sendCreatorOrderNotifications(order);
+
         log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
     }
 
@@ -178,8 +186,11 @@ public class PaymentService {
         for (OrderItem item : order.getItems()) {
             if (item.getCreator() == null) continue;
             int gross = item.getPricePence() * item.getQuantity();
-            int net   = gross - new BigDecimal(gross)
-                    .multiply(commissionRate).setScale(0, RoundingMode.HALF_UP).intValue();
+            // Creator earns 60% — Ukena takes 40% commission
+            int net = new BigDecimal(gross)
+                    .multiply(BigDecimal.ONE.subtract(commissionRate))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .intValue();
             ledgerRepository.save(EarningsLedger.builder()
                     .artisanProfileId(item.getCreator().getId())
                     .orderId(order.getId())
@@ -192,35 +203,18 @@ public class PaymentService {
         }
     }
 
-    private void updatePayoutRecord(Order order) {
+    private void sendCreatorOrderNotifications(Order order) {
         order.getItems().stream()
                 .filter(i -> i.getCreator() != null)
                 .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
                 .forEach((creatorId, items) -> {
-                    int netTotal = items.stream().mapToInt(i -> {
-                        int gross = i.getPricePence() * i.getQuantity();
-                        return gross - new BigDecimal(gross)
-                                .multiply(commissionRate)
-                                .setScale(0, RoundingMode.HALF_UP).intValue();
-                    }).sum();
-                    try {
-                        PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
-                                .orElseGet(() -> creatorRepository.findActiveById(creatorId)
-                                        .map(creator -> PayoutRecord.builder()
-                                                .creatorId(creatorId)
-                                                .creator(creator)
-                                                .build())
-                                        .orElse(null));
-                        if (payout == null) {
-                            log.warn("Creator {} not found for payout update", creatorId);
-                            return;
-                        }
-                        payout.setPendingPence(payout.getPendingPence() + netTotal);
-                        payoutRepository.saveAndFlush(payout);
-                        log.info("Payout updated for creator={} net={}", creatorId, netTotal);
-                    } catch (Exception e) {
-                        log.warn("Payout update skipped for creator={}: {}", creatorId, e.getMessage());
-                    }
+                    OrderItem first = items.get(0);
+                    userRepository.findByCreatorId(creatorId).ifPresentOrElse(
+                            user -> emailService.sendNewOrderNotification(
+                                    user.getEmail(), user.getFullName(),
+                                    order.getDisplayId(), first.getProductName(),
+                                    items.stream().mapToInt(OrderItem::getQuantity).sum()),
+                            () -> log.warn("No user found for creatorId={}", creatorId));
                 });
     }
 

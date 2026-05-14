@@ -28,19 +28,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final OrderRepository    orderRepository;
-    private final ProductRepository  productRepository;
-    private final UserRepository     userRepository;
+    private final OrderRepository     orderRepository;
+    private final ProductRepository   productRepository;
+    private final UserRepository      userRepository;
     private final DeliveryZoneService deliveryZoneService;
-    private final ObjectMapper       objectMapper;
-    private final EmailService       emailService;
+    private final ObjectMapper        objectMapper;
+    private final EmailService        emailService;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
         String buyerEmail    = buyer != null ? buyer.getEmail()    : req.guestEmail().toLowerCase().trim();
         String buyerFullName = buyer != null ? buyer.getFullName() : req.guestFullName().trim();
 
-        // Validate delivery zone server-side
         DeliveryZone zone = deliveryZoneService.getActiveById(req.deliveryZoneId());
 
         List<OrderItem> items = req.items().stream().map(itemReq -> {
@@ -86,7 +85,10 @@ public class OrderService {
         order.getItems().addAll(items);
         Order saved = orderRepository.save(order);
 
-        sendOrderEmails(saved);
+        // Only send buyer acknowledgement — creator notification fires after payment is confirmed
+        emailService.sendApplicationReceived(
+                saved.getBuyerEmail(), saved.getBuyerFullName(), saved.getDisplayId());
+
         return toDto(saved);
     }
 
@@ -107,27 +109,6 @@ public class OrderService {
         guestOrders.forEach(o -> o.setBuyer(user));
         orderRepository.saveAll(guestOrders);
         log.info("Linked {} guest orders to new user {}", guestOrders.size(), user.getId());
-    }
-
-    private void sendOrderEmails(Order order) {
-        String creatorNames = order.getItems().stream()
-                .map(OrderItem::getCreatorFullName).distinct()
-                .collect(Collectors.joining(", "));
-        emailService.sendOrderConfirmation(
-                order.getBuyerEmail(), order.getBuyerFullName(),
-                order.getDisplayId(), order.getTotalPence(), creatorNames);
-        order.getItems().stream()
-                .filter(i -> i.getCreator() != null)
-                .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
-                .forEach((creatorId, creatorItems) -> {
-                    OrderItem first = creatorItems.get(0);
-                    userRepository.findByCreatorId(creatorId).ifPresentOrElse(
-                            user -> emailService.sendNewOrderNotification(
-                                    user.getEmail(), user.getFullName(),
-                                    order.getDisplayId(), first.getProductName(),
-                                    creatorItems.stream().mapToInt(OrderItem::getQuantity).sum()),
-                            () -> log.warn("No user found for creatorId={}", creatorId));
-                });
     }
 
     @Transactional(readOnly = true)

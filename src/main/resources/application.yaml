@@ -122,7 +122,7 @@ ukena:
 
   payment:
     provider: ${PAYMENT_PROVIDER:stripe}
-    commission-rate: 0.15
+    commission-rate: 0.40
 
   stripe:
     secret-key: ${STRIPE_SECRET_KEY:}
