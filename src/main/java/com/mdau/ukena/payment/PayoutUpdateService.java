@@ -7,6 +7,7 @@ import com.mdau.ukena.order.Order;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,20 +21,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PayoutUpdateService {
 
-    private final PayoutRepository     payoutRepository;
-    private final CreatorRepository    creatorRepository;
-    // ── Self-reference so Spring proxies @Transactional on attemptUpdate() ──
-    private final PayoutUpdateService  self;
+    private final PayoutRepository  payoutRepository;
+    private final CreatorRepository creatorRepository;
+    private final ApplicationContext applicationContext;
 
     @Value("${ukena.payment.commission-rate:0.40}")
     private BigDecimal commissionRate;
 
-    /**
-     * Called from PaymentService.markOrderPaid().
-     * Not @Transactional itself — each retry calls self.attemptUpdate()
-     * which opens its own REQUIRES_NEW transaction, so a failed attempt
-     * never poisons the next one.
-     */
     public void updatePayoutRecord(Order order) {
         order.getItems().stream()
                 .filter(i -> i.getCreator() != null)
@@ -51,13 +45,12 @@ public class PayoutUpdateService {
     }
 
     private void retryUpdate(String creatorId, int netTotal, String displayId) {
+        // Get the Spring-proxied version of this bean so @Transactional(REQUIRES_NEW) is honoured
+        PayoutUpdateService proxy = applicationContext.getBean(PayoutUpdateService.class);
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                // Each call to self.attemptUpdate() runs in a brand-new transaction.
-                // If it fails, that transaction is cleanly rolled back and the next
-                // attempt starts with a fresh Hibernate session — no stale state.
-                self.attemptUpdate(creatorId, netTotal, displayId);
+                proxy.attemptUpdate(creatorId, netTotal, displayId);
                 return;
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
@@ -77,10 +70,6 @@ public class PayoutUpdateService {
         }
     }
 
-    /**
-     * Each call is its own isolated transaction (REQUIRES_NEW).
-     * Public so Spring AOP can proxy it.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void attemptUpdate(String creatorId, int netTotal, String displayId) {
         PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
