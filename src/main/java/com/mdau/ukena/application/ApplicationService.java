@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -46,10 +47,7 @@ public class ApplicationService {
                 .status(ApplicationStatus.PENDING).build();
 
         applicationRepo.save(app);
-
-        // Notify applicant asynchronously
         emailService.sendApplicationReceived(req.email(), req.fullName(), id);
-
         return toDto(app);
     }
 
@@ -76,28 +74,44 @@ public class ApplicationService {
         applicationRepo.save(app);
 
         if (newStatus == ApplicationStatus.APPROVED) {
-            String tempPassword = provisionCreatorAccount(app);
-            // Send welcome email with temp password
-            String slug = slugify(app.getFullName());
-            emailService.sendCreatorWelcome(
-                    app.getEmail(), app.getFullName(),
-                    slug, tempPassword);
+            boolean alreadyHasAccount = userRepository.existsByEmail(app.getEmail());
+            if (alreadyHasAccount) {
+                // Creator was previously suspended — unsuspend their existing account
+                userRepository.findByEmail(app.getEmail()).ifPresent(user -> {
+                    user.setSuspended(false);
+                    userRepository.save(user);
+                    // Also clear deletedAt on their creator profile
+                    if (user.getCreatorId() != null) {
+                        creatorRepository.findById(user.getCreatorId()).ifPresent(c -> {
+                            c.setDeletedAt(null);
+                            creatorRepository.save(c);
+                        });
+                    }
+                    log.info("Re-activated existing creator account: {}", user.getEmail());
+                });
+                emailService.sendCreatorWelcome(
+                        app.getEmail(), app.getFullName(),
+                        userRepository.findByEmail(app.getEmail())
+                                .map(User::getCreatorId).orElse(""),
+                        null);
+            } else {
+                String tempPassword = provisionCreatorAccount(app);
+                String slug = slugify(app.getFullName());
+                emailService.sendCreatorWelcome(
+                        app.getEmail(), app.getFullName(),
+                        slug, tempPassword);
+            }
         }
 
         return toDto(app);
     }
 
     private String provisionCreatorAccount(ArtisanApplication app) {
-        if (userRepository.existsByEmail(app.getEmail())) {
-            log.info("User already exists for {}, skipping provisioning",
-                    app.getEmail());
-            return null;
-        }
-
         String slug = slugify(app.getFullName());
         String finalSlug = slug;
         int count = 1;
-        while (creatorRepository.existsByIdAndDeletedAtIsNull(finalSlug)) {
+        // Check including soft-deleted to avoid slug conflicts
+        while (creatorRepository.existsById(finalSlug)) {
             finalSlug = slug + count++;
         }
 

@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -54,9 +55,15 @@ public class AdminController {
 
     // -- Creators -----------------------------------------------------------
 
-    @DeleteMapping("/creators/{id}")
-    public ResponseEntity<Void> deleteCreator(@PathVariable String id) {
-        adminService.softDeleteCreator(id);
+    @PatchMapping("/creators/{id}/suspend")
+    public ResponseEntity<Void> suspendCreator(@PathVariable String id) {
+        adminService.suspendCreator(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/creators/{id}/unsuspend")
+    public ResponseEntity<Void> unsuspendCreator(@PathVariable String id) {
+        adminService.unsuspendCreator(id);
         return ResponseEntity.noContent().build();
     }
 

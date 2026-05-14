@@ -1,12 +1,16 @@
 package com.mdau.ukena.product;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
+
 public interface ProductRepository extends JpaRepository<Product, String> {
+
     @Query("""
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
@@ -21,6 +25,7 @@ public interface ProductRepository extends JpaRepository<Product, String> {
             @Param("minPrice")  Integer minPrice,
             @Param("maxPrice")  Integer maxPrice,
             Pageable pageable);
+
     @Query("""
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
@@ -28,9 +33,12 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         ORDER BY p.createdAt DESC
     """)
     List<Product> findByCreatorIdNotDeleted(@Param("creatorId") String creatorId);
+
     @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
     Optional<Product> findActiveById(@Param("id") String id);
+
     boolean existsByIdAndCreatorId(String id, String creatorId);
+
     @Query("""
         SELECT p FROM Product p
         JOIN FETCH p.creator c
@@ -41,4 +49,31 @@ public interface ProductRepository extends JpaRepository<Product, String> {
              LOWER(c.craft)      LIKE LOWER(CONCAT('%', :q, '%')))
     """)
     Page<Product> search(@Param("q") String q, Pageable pageable);
+
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.status =
+        com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+        AND p.status <> com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+    """)
+    int suspendAllByCreatorId(@Param("creatorId") String creatorId);
+
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.status =
+        com.mdau.ukena.product.ProductStatus.ACTIVE
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+    """)
+    int restoreAllByCreatorId(@Param("creatorId") String creatorId);
+
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+    """)
+    List<Product> findByCreatorId(@Param("creatorId") String creatorId);
 }

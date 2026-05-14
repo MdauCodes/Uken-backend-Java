@@ -7,6 +7,7 @@ import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.payment.PaymentService;
 import com.mdau.ukena.payment.PayoutResult;
+import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
@@ -15,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -26,6 +28,7 @@ public class AdminService {
 
     private final UserRepository userRepository;
     private final CreatorRepository creatorRepository;
+    private final ProductRepository productRepository;
     private final PayoutRepository payoutRepository;
     private final ReviewRepository reviewRepository;
     private final FeaturedSlotRepository featuredSlotRepository;
@@ -79,7 +82,7 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(true);
         userRepository.save(user);
-        log.info("User {} suspended", userId);
+        log.info("Buyer {} suspended", userId);
     }
 
     @Transactional
@@ -88,18 +91,49 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(false);
         userRepository.save(user);
-        log.info("User {} unsuspended", userId);
+        log.info("Buyer {} unsuspended", userId);
     }
 
     // -- Creators -----------------------------------------------------------
 
     @Transactional
-    public void softDeleteCreator(String creatorId) {
-        Creator creator = creatorRepository.findActiveById(creatorId)
+    public void suspendCreator(String creatorId) {
+        // 1. Soft-delete the creator profile (hides from storefront)
+        Creator creator = creatorRepository.findById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(Instant.now());
         creatorRepository.save(creator);
-        log.info("Creator {} soft-deleted", creatorId);
+
+        // 2. Suspend the linked user account (blocks login)
+        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
+            user.setSuspended(true);
+            userRepository.save(user);
+            log.info("Creator user account suspended: {}", user.getEmail());
+        });
+
+        // 3. Suspend all their products (removes from shop)
+        int suspended = productRepository.suspendAllByCreatorId(creatorId);
+        log.info("Creator {} suspended — {} products suspended", creatorId, suspended);
+    }
+
+    @Transactional
+    public void unsuspendCreator(String creatorId) {
+        // 1. Restore the creator profile
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+        creator.setDeletedAt(null);
+        creatorRepository.save(creator);
+
+        // 2. Unsuspend the linked user account
+        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
+            user.setSuspended(false);
+            userRepository.save(user);
+            log.info("Creator user account unsuspended: {}", user.getEmail());
+        });
+
+        // 3. Restore their products
+        int restored = productRepository.restoreAllByCreatorId(creatorId);
+        log.info("Creator {} unsuspended — {} products restored", creatorId, restored);
     }
 
     // -- Payouts ------------------------------------------------------------
@@ -123,29 +157,27 @@ public class AdminService {
                         .build());
 
         int amount = payout.getPendingPence();
-        if (amount <= 0) {
+        if (amount <= 0)
             throw ApiException.badRequest("No pending earnings to pay out");
-        }
 
-        // Attempt gateway transfer; log outcome either way
         PayoutResult result = paymentService.gatewayPayout(
                 creatorId, accountNumber, accountName);
         log.info("Payout for creator {}: success={} ref={} msg={}",
                 creatorId, result.success(), result.gatewayRef(), result.message());
 
-        // Update PayoutRecord regardless (PaymentService already credited ledger if success)
-        payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
-        payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
-        payout.setPendingPence(0);
-        payout.setLastPaidAt(Instant.now());
-        PayoutRecord saved = payoutRepository.save(payout);
+        if (result.success()) {
+            payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
+            payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
+            payout.setPendingPence(0);
+            payout.setLastPaidAt(Instant.now());
+            payoutRepository.save(payout);
 
-        // Email artisan
-        userRepository.findByCreatorId(creatorId).ifPresent(user ->
-                emailService.sendPayoutConfirmation(
-                        user.getEmail(), user.getFullName(), amount, "GBP"));
+            userRepository.findByCreatorId(creatorId).ifPresent(user ->
+                    emailService.sendPayoutConfirmation(
+                            user.getEmail(), user.getFullName(), amount, "GBP"));
+        }
 
-        return toPayoutDto(saved);
+        return toPayoutDto(payout);
     }
 
     // -- Reviews ------------------------------------------------------------
