@@ -3,8 +3,6 @@ package com.mdau.ukena.payment;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.common.ApiResponse;
 import com.mdau.ukena.security.CurrentUser;
-import com.mdau.ukena.user.User;
-import com.mdau.ukena.user.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +16,6 @@ import org.springframework.web.bind.annotation.*;
 public class PaymentController {
 
     private final PaymentService paymentService;
-    private final UserRepository userRepository;
 
     @PostMapping("/initiate")
     public ResponseEntity<ApiResponse<PaymentInitResponse>> initiate(
@@ -29,10 +26,9 @@ public class PaymentController {
 
         if (currentUser != null) {
             caller = currentUser;
-        } else if (req.guestEmail() != null) {
-            User user = userRepository.findByEmail(req.guestEmail().toLowerCase().trim())
-                    .orElseThrow(() -> ApiException.notFound("No account found for this email"));
-            caller = new CurrentUser(user.getId(), user.getEmail(), user.getRole(), user.getCreatorId());
+        } else if (req.guestEmail() != null && !req.guestEmail().isBlank()) {
+            // Guest buyer — no account required; identity verified via order's buyerEmail
+            caller = new CurrentUser(null, req.guestEmail().toLowerCase().trim(), null, null);
         } else {
             throw ApiException.forbidden("Provide guestEmail or log in");
         }
