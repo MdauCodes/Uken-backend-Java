@@ -87,8 +87,8 @@ public class OrderService {
         Order saved = orderRepository.save(order);
 
         // Only send buyer acknowledgement — creator notification fires after payment is confirmed
-        emailService.sendApplicationReceived(
-                saved.getBuyerEmail(), saved.getBuyerFullName(), saved.getDisplayId());
+//        emailService.sendApplicationReceived(
+//                saved.getBuyerEmail(), saved.getBuyerFullName(), saved.getDisplayId());
 
         return toDto(saved);
     }
