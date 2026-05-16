@@ -82,6 +82,8 @@ public class SecurityConfig {
                         "/products", "/products/*",
                         "/reviews/product/*",
                         "/search").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/orders/track-by-email").permitAll()
+
                 .requestMatchers(
                         "/actuator/health",
                         "/v3/api-docs/**",
@@ -110,4 +112,6 @@ public class SecurityConfig {
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
     }
+
+
 }

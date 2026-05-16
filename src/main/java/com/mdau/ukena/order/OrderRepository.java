@@ -34,5 +34,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
         AND o.createdAt <= :cutoff
         AND o.reminderSentAt IS NULL
     """)
+
+
     List<Order> findPendingOrdersForReminder(@Param("cutoff") Instant cutoff);
+
+
+    List<Order> findByBuyerEmailIgnoreCaseOrderByCreatedAtDesc(String email);
 }

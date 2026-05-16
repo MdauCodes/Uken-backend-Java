@@ -248,4 +248,10 @@ public class OrderService {
         if (current == OrderStatus.DELIVERED && next != OrderStatus.CANCELLED)
             throw ApiException.badRequest("Order already delivered");
     }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> trackByEmail(String email) {
+        return orderRepository.findByBuyerEmailIgnoreCaseOrderByCreatedAtDesc(email.trim())
+                .stream().map(this::toDto).toList();
+    }
 }
