@@ -30,7 +30,10 @@ public class StripeGateway implements PaymentGateway {
         try {
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
-                    .setSuccessUrl(callbackUrl + "?ref=" + req.displayId() + "&session_id={CHECKOUT_SESSION_ID}")
+                    .setSuccessUrl(callbackUrl
+                            + "?ref=" + req.displayId()
+                            + "&email=" + java.net.URLEncoder.encode(req.buyerEmail(), java.nio.charset.StandardCharsets.UTF_8)
+                            + "&session_id={CHECKOUT_SESSION_ID}")
                     .setCancelUrl(cancelUrl + "?cancelled=true&ref=" + req.displayId())
                     .setCustomerEmail(req.buyerEmail())
                     .putMetadata("display_id",  req.displayId())
