@@ -1,6 +1,7 @@
 package com.mdau.ukena.admin;
 
 import com.mdau.ukena.admin.dto.*;
+import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
@@ -35,6 +36,7 @@ public class AdminService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final PaymentService paymentService;
+    private final CloudinaryService cloudinaryService;
 
     // -- Staff management ---------------------------------------------------
 

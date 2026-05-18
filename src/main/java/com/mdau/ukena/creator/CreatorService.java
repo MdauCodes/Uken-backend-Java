@@ -2,6 +2,7 @@ package com.mdau.ukena.creator;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.dto.*;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class CreatorService {
 
     private final CreatorRepository creatorRepository;
     private final ObjectMapper objectMapper;
+    private final CloudinaryService cloudinaryService;
 
     @Transactional(readOnly = true)
     public List<CreatorSummary> list(String craft, String region) {
@@ -47,12 +49,34 @@ public class CreatorService {
         if (req.region()          != null) creator.setRegion(req.region());
         if (req.craft()           != null) creator.setCraft(req.craft());
         if (req.pullQuote()       != null) creator.setPullQuote(req.pullQuote());
-        if (req.portraitImage()   != null) creator.setPortraitImage(req.portraitImage());
-        if (req.headerImage()     != null) creator.setHeaderImage(req.headerImage());
+        if (req.portraitImage() != null) {
+            String oldPortrait = creator.getPortraitImage();
+            creator.setPortraitImage(req.portraitImage());
+            if (oldPortrait != null && !oldPortrait.equals(req.portraitImage()))
+                cloudinaryService.deleteImage(cloudinaryService.extractPublicId(oldPortrait));
+        }
+        if (req.headerImage() != null) {
+            String oldHeader = creator.getHeaderImage();
+            creator.setHeaderImage(req.headerImage());
+            if (oldHeader != null && !oldHeader.equals(req.headerImage()))
+                cloudinaryService.deleteImage(cloudinaryService.extractPublicId(oldHeader));
+        }
         if (req.storyParagraphs() != null)
             creator.setStoryParagraphs(toJson(req.storyParagraphs()));
-        if (req.processSteps() != null)
+        if (req.processSteps() != null) {
+            // Delete removed workshop images from Cloudinary before overwriting.
+            List<String> oldUrls = parseList(creator.getProcessSteps(),
+                    new TypeReference<List<ProcessStep>>() {})
+                    .stream().map(ProcessStep::image).toList();
+            List<String> newUrls = req.processSteps().stream()
+                    .map(CreatorProfileUpdate.ProcessStepUpdate::image).toList();
+            oldUrls.stream()
+                    .filter(url -> !newUrls.contains(url))
+                    .map(cloudinaryService::extractPublicId)
+                    .filter(pid -> pid != null)
+                    .forEach(cloudinaryService::deleteImage);
             creator.setProcessSteps(toJson(req.processSteps()));
+        }
         return toDetail(creatorRepository.save(creator));
     }
 

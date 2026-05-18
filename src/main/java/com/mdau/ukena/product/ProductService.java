@@ -75,7 +75,14 @@ public class ProductService {
         Product product = getOwnedProduct(creatorId, productId);
         product.setName(req.name());
         product.setPricePence(req.pricePence());
-        if (req.heroImage()  != null) product.setHeroImage(req.heroImage());
+        if (req.heroImage() != null) {
+            String oldHero = product.getHeroImage();
+            product.setHeroImage(req.heroImage());
+            if (oldHero != null && !oldHero.equals(req.heroImage())) {
+                String pid = cloudinaryService.extractPublicId(oldHero);
+                if (pid != null) cloudinaryService.deleteImage(pid);
+            }
+        }
         if (req.pieceStory() != null) product.setPieceStory(req.pieceStory());
         if (req.materials()  != null) product.setMaterials(toJson(req.materials()));
         if (req.dimensions() != null) product.setDimensions(req.dimensions());
@@ -163,12 +170,19 @@ public class ProductService {
     // ── Helpers ───────────────────────────────────────────────────
 
     private void deleteProductImages(Product product) {
+        // Delete child ProductImage records from Cloudinary.
         List<String> publicIds = product.getImages().stream()
                 .map(ProductImage::getCloudinaryId)
                 .filter(id -> id != null && !id.isBlank())
                 .toList();
         if (!publicIds.isEmpty()) {
             cloudinaryService.deleteImages(publicIds);
+        }
+        // Also delete the heroImage URL which is stored directly on the product
+        // row (not in ProductImage) and would otherwise be orphaned in Cloudinary.
+        if (product.getHeroImage() != null && !product.getHeroImage().isBlank()) {
+            String heroPublicId = cloudinaryService.extractPublicId(product.getHeroImage());
+            if (heroPublicId != null) cloudinaryService.deleteImage(heroPublicId);
         }
     }
 
