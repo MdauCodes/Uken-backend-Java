@@ -32,18 +32,23 @@ public class CloudinaryService {
     @Value("${ukena.cloudinary.api-key:}")
     private String apiKey;
 
-    // ── Sign upload request (frontend uploads directly to Cloudinary) ─────
+    // -- Sign upload request (frontend uploads directly to Cloudinary) -------
 
     public SignResponse signUpload(SignRequest request) {
         try {
             long timestamp = System.currentTimeMillis() / 1000L;
 
+            // Build a full public_id that already contains the folder so the
+            // frontend never needs to pass folder as a separate signed param.
+            // Cloudinary signature must cover exactly the params the frontend
+            // will post; signing folder separately caused double-folder paths.
+            String resolvedPublicId = (request.publicId() != null && !request.publicId().isBlank())
+                    ? request.publicId()
+                    : request.folder() + "/" + UUID.randomUUID().toString().replace("-", "");
+
             Map<String, Object> params = new HashMap<>();
             params.put("timestamp", timestamp);
-            params.put("folder", request.folder());
-            if (request.publicId() != null && !request.publicId().isBlank()) {
-                params.put("public_id", request.publicId());
-            }
+            params.put("public_id", resolvedPublicId);
 
             String signature = cloudinary.apiSignRequest(params,
                     cloudinary.config.apiSecret);
@@ -52,7 +57,7 @@ public class CloudinaryService {
 
             return new SignResponse(
                     signature, timestamp, apiKey, cloudName,
-                    request.folder(), request.publicId(),
+                    request.folder(), resolvedPublicId,
                     "https://api.cloudinary.com/v1_1/" + cloudName + "/image/upload");
 
         } catch (Exception e) {
@@ -61,7 +66,7 @@ public class CloudinaryService {
         }
     }
 
-    // ── Server-side upload (used for media/upload endpoint) ───────────────
+    // -- Server-side upload (used for media/upload endpoint) -----------------
 
     public UploadResult upload(MultipartFile file, String folder) {
         validateFile(file);
@@ -72,7 +77,6 @@ public class CloudinaryService {
                     file.getBytes(),
                     ObjectUtils.asMap(
                             "public_id", publicId,
-                            "folder", folder,
                             "resource_type", "image",
                             "overwrite", false));
 
@@ -88,7 +92,7 @@ public class CloudinaryService {
         }
     }
 
-    // ── Delete single image ───────────────────────────────────────────────
+    // -- Delete single image -------------------------------------------------
 
     public boolean deleteImage(String publicId) {
         if (publicId == null || publicId.isBlank()) return false;
@@ -108,14 +112,14 @@ public class CloudinaryService {
         }
     }
 
-    // ── Delete multiple images ────────────────────────────────────────────
+    // -- Delete multiple images ----------------------------------------------
 
     public void deleteImages(List<String> publicIds) {
         if (publicIds == null || publicIds.isEmpty()) return;
         publicIds.forEach(this::deleteImage);
     }
 
-    // ── Extract publicId from a Cloudinary URL ────────────────────────────
+    // -- Extract publicId from a Cloudinary URL ------------------------------
 
     public String extractPublicId(String cloudinaryUrl) {
         if (cloudinaryUrl == null || cloudinaryUrl.isBlank()) return null;
@@ -134,7 +138,7 @@ public class CloudinaryService {
         }
     }
 
-    // ── Validation ────────────────────────────────────────────────────────
+    // -- Validation ----------------------------------------------------------
 
     private void validateFile(MultipartFile file) {
         if (file == null || file.isEmpty())
@@ -145,7 +149,7 @@ public class CloudinaryService {
             throw ApiException.badRequest("File size exceeds 8MB limit");
     }
 
-    // ── Inner result record ───────────────────────────────────────────────
+    // -- Inner result record -------------------------------------------------
 
     public record UploadResult(String url, String publicId) {}
 }

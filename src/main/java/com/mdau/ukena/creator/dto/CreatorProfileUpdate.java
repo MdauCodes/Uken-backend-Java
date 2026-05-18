@@ -11,5 +11,8 @@ public record CreatorProfileUpdate(
         List<String> storyParagraphs,
         String pullQuote,
         String portraitImage,
-        String headerImage
-) {}
+        String headerImage,
+        List<ProcessStepUpdate> processSteps
+) {
+    public record ProcessStepUpdate(String image, String caption) {}
+}

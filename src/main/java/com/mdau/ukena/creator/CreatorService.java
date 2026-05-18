@@ -51,6 +51,8 @@ public class CreatorService {
         if (req.headerImage()     != null) creator.setHeaderImage(req.headerImage());
         if (req.storyParagraphs() != null)
             creator.setStoryParagraphs(toJson(req.storyParagraphs()));
+        if (req.processSteps() != null)
+            creator.setProcessSteps(toJson(req.processSteps()));
         return toDetail(creatorRepository.save(creator));
     }
 
