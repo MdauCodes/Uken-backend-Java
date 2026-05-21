@@ -4,10 +4,13 @@ import com.mdau.ukena.cloudinary.dto.DeleteImageRequest;
 import com.mdau.ukena.cloudinary.dto.SignRequest;
 import com.mdau.ukena.cloudinary.dto.SignResponse;
 import com.mdau.ukena.common.ApiResponse;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.security.CurrentUser;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -23,9 +26,14 @@ public class CloudinaryController {
      * Restricted to authenticated users to prevent anonymous token farming.
      */
     @PostMapping("/sign")
-    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<SignResponse>> sign(
-            @Valid @RequestBody SignRequest request) {
+            @Valid @RequestBody SignRequest request,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        // Unauthenticated callers (e.g. application form) may only upload to
+        // the applications folder to prevent anonymous token farming.
+        if (currentUser == null && !"applications".equals(request.folder())) {
+            throw ApiException.forbidden("Unauthenticated uploads are only permitted to the applications folder");
+        }
         return ResponseEntity.ok(ApiResponse.ok(
                 cloudinaryService.signUpload(request)));
     }
