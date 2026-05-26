@@ -4,6 +4,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import java.util.List;
 import java.util.Optional;
 public interface CreatorRepository extends JpaRepository<Creator, String> {
     @Query("SELECT c FROM Creator c WHERE c.deletedAt IS NULL AND c.id = :id")
@@ -14,7 +15,7 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
            "AND (:craft IS NULL OR LOWER(craft) = LOWER(CAST(:craft AS varchar))) " +
            "AND (:region IS NULL OR LOWER(region) = LOWER(CAST(:region AS varchar))) " +
            "ORDER BY created_at DESC", nativeQuery = true)
-    java.util.List<Creator> findFiltered(
+    List<Creator> findFiltered(
             @Param("craft")  String craft,
             @Param("region") String region);
     @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END " +
@@ -25,4 +26,10 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
            "LOWER(c.craft)    LIKE LOWER(CONCAT('%', :q, '%')) OR " +
            "LOWER(c.region)   LIKE LOWER(CONCAT('%', :q, '%')))")
     Page<Creator> search(@Param("q") String q, Pageable pageable);
+    @Query(value = "SELECT * FROM creators WHERE " +
+           "(:status IS NULL " +
+           "OR (:status = 'ACTIVE' AND deleted_at IS NULL) " +
+           "OR (:status = 'SUSPENDED' AND deleted_at IS NOT NULL)) " +
+           "ORDER BY created_at DESC", nativeQuery = true)
+    List<Creator> findAllForAdmin(@Param("status") String status);
 }

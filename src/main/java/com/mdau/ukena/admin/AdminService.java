@@ -98,44 +98,41 @@ public class AdminService {
 
     // -- Creators -----------------------------------------------------------
 
+    @Transactional(readOnly = true)
+    public List<AdminCreatorRow> listCreators(String status) {
+        String param = (status == null || status.isBlank()) ? null : status.toUpperCase();
+        return creatorRepository.findAllForAdmin(param)
+                .stream().map(this::toAdminCreatorRow).toList();
+    }
+
     @Transactional
     public void suspendCreator(String creatorId) {
-        // 1. Soft-delete the creator profile (hides from storefront)
         Creator creator = creatorRepository.findById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(Instant.now());
         creatorRepository.save(creator);
-
-        // 2. Suspend the linked user account (blocks login)
         userRepository.findByCreatorId(creatorId).ifPresent(user -> {
             user.setSuspended(true);
             userRepository.save(user);
             log.info("Creator user account suspended: {}", user.getEmail());
         });
-
-        // 3. Suspend all their products (removes from shop)
         int suspended = productRepository.suspendAllByCreatorId(creatorId);
-        log.info("Creator {} suspended — {} products suspended", creatorId, suspended);
+        log.info("Creator {} suspended - {} products suspended", creatorId, suspended);
     }
 
     @Transactional
     public void unsuspendCreator(String creatorId) {
-        // 1. Restore the creator profile
         Creator creator = creatorRepository.findById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(null);
         creatorRepository.save(creator);
-
-        // 2. Unsuspend the linked user account
         userRepository.findByCreatorId(creatorId).ifPresent(user -> {
             user.setSuspended(false);
             userRepository.save(user);
             log.info("Creator user account unsuspended: {}", user.getEmail());
         });
-
-        // 3. Restore their products
         int restored = productRepository.restoreAllByCreatorId(creatorId);
-        log.info("Creator {} unsuspended — {} products restored", creatorId, restored);
+        log.info("Creator {} unsuspended - {} products restored", creatorId, restored);
     }
 
     // -- Payouts ------------------------------------------------------------
@@ -151,34 +148,28 @@ public class AdminService {
                                           String accountName) {
         Creator creator = creatorRepository.findActiveById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
-
         PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
                 .orElseGet(() -> PayoutRecord.builder()
                         .creatorId(creatorId)
                         .creator(creator)
                         .build());
-
         int amount = payout.getPendingPence();
         if (amount <= 0)
             throw ApiException.badRequest("No pending earnings to pay out");
-
         PayoutResult result = paymentService.gatewayPayout(
                 creatorId, accountNumber, accountName);
         log.info("Payout for creator {}: success={} ref={} msg={}",
                 creatorId, result.success(), result.gatewayRef(), result.message());
-
         if (result.success()) {
             payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
             payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
             payout.setPendingPence(0);
             payout.setLastPaidAt(Instant.now());
             payoutRepository.save(payout);
-
             userRepository.findByCreatorId(creatorId).ifPresent(user ->
                     emailService.sendPayoutConfirmation(
                             user.getEmail(), user.getFullName(), amount, "GBP"));
         }
-
         return toPayoutDto(payout);
     }
 
@@ -224,6 +215,14 @@ public class AdminService {
     }
 
     // -- Mappers ------------------------------------------------------------
+
+    private AdminCreatorRow toAdminCreatorRow(Creator c) {
+        return new AdminCreatorRow(
+                c.getId(), c.getFirstName(), c.getFullName(),
+                c.getCraft(), c.getRegion(), c.getImage(),
+                c.getDeletedAt() != null,
+                c.getCreatedAt());
+    }
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {
         Creator c = p.getCreator();

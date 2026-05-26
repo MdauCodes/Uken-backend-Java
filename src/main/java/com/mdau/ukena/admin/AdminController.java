@@ -55,6 +55,12 @@ public class AdminController {
 
     // -- Creators -----------------------------------------------------------
 
+    @GetMapping("/creators")
+    public ResponseEntity<ApiResponse<List<AdminCreatorRow>>> listCreators(
+            @RequestParam(required = false) String status) {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listCreators(status)));
+    }
+
     @PatchMapping("/creators/{id}/suspend")
     public ResponseEntity<Void> suspendCreator(@PathVariable String id) {
         adminService.suspendCreator(id);
