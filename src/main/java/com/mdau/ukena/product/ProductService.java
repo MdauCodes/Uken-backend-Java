@@ -15,6 +15,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.text.Normalizer;
 import java.time.Instant;
 import java.util.List;
@@ -24,23 +25,32 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ProductService {
 
-    private final ProductRepository productRepository;
+    /** Sentinel creator ID reserved for Uken-owned catalogue products. */
+    public static final String UKENA_CREATOR_ID = "ukena";
+
+    private final ProductRepository      productRepository;
     private final ProductImageRepository imageRepository;
-    private final CreatorRepository creatorRepository;
-    private final CloudinaryService cloudinaryService;
-    private final ObjectMapper objectMapper;
+    private final CreatorRepository      creatorRepository;
+    private final CloudinaryService      cloudinaryService;
+    private final ObjectMapper           objectMapper;
+
+    // ── Public browse ────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public Page<ProductDto> browse(String creatorId, Integer minPrice,
                                    Integer maxPrice, String sort,
                                    int page, int size) {
-        Sort sorting = switch (sort != null ? sort : "newest") {
-            case "price_asc"  -> Sort.by("pricePence").ascending();
-            case "price_desc" -> Sort.by("pricePence").descending();
-            default           -> Sort.by("createdAt").descending();
-        };
-        Pageable pageable = PageRequest.of(page, size, sorting);
+        Pageable pageable = PageRequest.of(page, size, resolveSort(sort));
         return productRepository.browse(creatorId, minPrice, maxPrice, pageable)
+                .map(this::toDto);
+    }
+
+    /** Ukena-owned catalogue only — used by GET /catalogue. */
+    @Transactional(readOnly = true)
+    public Page<ProductDto> browseUkenaCatalogue(Integer minPrice, Integer maxPrice,
+                                                  String sort, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, resolveSort(sort));
+        return productRepository.browse(UKENA_CREATOR_ID, minPrice, maxPrice, pageable)
                 .map(this::toDto);
     }
 
@@ -52,6 +62,8 @@ public class ProductService {
                 .map(this::toDto)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
     }
+
+    // ── Creator CRUD ─────────────────────────────────────────
 
     @Transactional
     public ProductDto create(String creatorId, ProductCreateRequest req) {
@@ -65,6 +77,7 @@ public class ProductService {
                 .materials(toJson(req.materials()))
                 .dimensions(req.dimensions()).care(req.care())
                 .status(ProductStatus.ACTIVE)
+                .isUkenaOwned(false)
                 .build();
         return toDto(productRepository.save(product));
     }
@@ -73,20 +86,8 @@ public class ProductService {
     public ProductDto update(String creatorId, String productId,
                              ProductUpdateRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
-        product.setName(req.name());
-        product.setPricePence(req.pricePence());
-        if (req.heroImage() != null) {
-            String oldHero = product.getHeroImage();
-            product.setHeroImage(req.heroImage());
-            if (oldHero != null && !oldHero.equals(req.heroImage())) {
-                String pid = cloudinaryService.extractPublicId(oldHero);
-                if (pid != null) cloudinaryService.deleteImage(pid);
-            }
-        }
-        if (req.pieceStory() != null) product.setPieceStory(req.pieceStory());
-        if (req.materials()  != null) product.setMaterials(toJson(req.materials()));
-        if (req.dimensions() != null) product.setDimensions(req.dimensions());
-        if (req.care()       != null) product.setCare(req.care());
+        applyFields(product, req.name(), req.pricePence(), req.heroImage(),
+                req.pieceStory(), req.materials(), req.dimensions(), req.care());
         return toDto(productRepository.save(product));
     }
 
@@ -94,10 +95,10 @@ public class ProductService {
     public ProductDto updateStatusByCreator(String creatorId, String productId,
                                             ProductStatusUpdateRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
-        ProductStatus newStatus = parseStatus(req.status());
-        if (newStatus == ProductStatus.SUSPENDED_BY_ADMIN)
+        ProductStatus next = parseStatus(req.status());
+        if (next == ProductStatus.SUSPENDED_BY_ADMIN)
             throw ApiException.forbidden("Only admins can set SUSPENDED_BY_ADMIN");
-        product.setStatus(newStatus);
+        product.setStatus(next);
         return toDto(productRepository.save(product));
     }
 
@@ -113,52 +114,85 @@ public class ProductService {
     @Transactional
     public void delete(String creatorId, String productId) {
         Product product = getOwnedProduct(creatorId, productId);
-        deleteProductImages(product);
+        purgeImages(product);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
-        log.info("Product {} soft-deleted", productId);
+        log.info("Product {} soft-deleted by creator {}", productId, creatorId);
     }
 
     @Transactional
     public void adminDelete(String productId) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
-        deleteProductImages(product);
+        purgeImages(product);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
         log.info("Product {} soft-deleted by admin", productId);
     }
 
+    // ── Uken catalogue (admin-managed) ───────────────────────
+
+    @Transactional
+    public ProductDto createForUkena(AdminProductCreateRequest req) {
+        Creator ukena = creatorRepository.findById(UKENA_CREATOR_ID)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Uken sentinel creator not seeded — check DataSeeder"));
+        String slug = generateSlug(req.name());
+        Product product = Product.builder()
+                .id(slug).creator(ukena).name(req.name())
+                .pricePence(req.pricePence()).heroImage(req.heroImage())
+                .pieceStory(req.pieceStory())
+                .materials(toJson(req.materials()))
+                .dimensions(req.dimensions()).care(req.care())
+                .status(ProductStatus.ACTIVE)
+                .isUkenaOwned(true)
+                .build();
+        ProductDto dto = toDto(productRepository.save(product));
+        log.info("Uken catalogue product created: {}", slug);
+        return dto;
+    }
+
+    @Transactional
+    public ProductDto updateForUkena(String productId, AdminProductCreateRequest req) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        if (!product.isUkenaOwned())
+            throw ApiException.forbidden("Product is not a Uken catalogue item");
+        applyFields(product, req.name(), req.pricePence(), req.heroImage(),
+                req.pieceStory(), req.materials(), req.dimensions(), req.care());
+        return toDto(productRepository.save(product));
+    }
+
+    // ── Images ───────────────────────────────────────────────
+
     @Transactional
     public ProductDto addImage(String creatorId, String productId,
                                AddImageRequest req) {
-        Product product = getOwnedProduct(creatorId, productId);
-        if (req.isPrimary()) {
-            product.getImages().forEach(img -> img.setPrimary(false));
-        }
-        ProductImage image = ProductImage.builder()
-                .product(product).url(req.url())
-                .cloudinaryId(req.cloudinaryId())
-                .isPrimary(req.isPrimary())
-                .displayOrder(req.displayOrder())
-                .altText(req.altText())
-                .build();
-        product.getImages().add(image);
-        return toDto(productRepository.save(product));
+        return addImageToProduct(getOwnedProduct(creatorId, productId), req);
+    }
+
+    @Transactional
+    public ProductDto addImageForUkena(String productId, AddImageRequest req) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        if (!product.isUkenaOwned())
+            throw ApiException.forbidden("Product is not a Uken catalogue item");
+        return addImageToProduct(product, req);
     }
 
     @Transactional
     public void deleteImage(String creatorId, String productId, Long imageId) {
         getOwnedProduct(creatorId, productId);
-        ProductImage image = imageRepository.findById(imageId)
-                .orElseThrow(() -> ApiException.notFound("Image not found"));
-        if (!image.getProduct().getId().equals(productId))
-            throw ApiException.forbidden("Image does not belong to this product");
-        // Delete from Cloudinary
-        if (image.getCloudinaryId() != null) {
-            cloudinaryService.deleteImage(image.getCloudinaryId());
-        }
-        imageRepository.delete(image);
+        removeImage(productId, imageId);
+    }
+
+    @Transactional
+    public void deleteImageForUkena(String productId, Long imageId) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        if (!product.isUkenaOwned())
+            throw ApiException.forbidden("Product is not a Uken catalogue item");
+        removeImage(productId, imageId);
     }
 
     @Transactional(readOnly = true)
@@ -167,31 +201,76 @@ public class ProductService {
                 .stream().map(this::toDto).toList();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────
+    // ── Internal helpers ─────────────────────────────────────
 
-    private void deleteProductImages(Product product) {
-        // Delete child ProductImage records from Cloudinary.
-        List<String> publicIds = product.getImages().stream()
+    private ProductDto addImageToProduct(Product product, AddImageRequest req) {
+        if (req.isPrimary())
+            product.getImages().forEach(img -> img.setPrimary(false));
+        product.getImages().add(ProductImage.builder()
+                .product(product).url(req.url())
+                .cloudinaryId(req.cloudinaryId())
+                .isPrimary(req.isPrimary())
+                .displayOrder(req.displayOrder())
+                .altText(req.altText())
+                .build());
+        return toDto(productRepository.save(product));
+    }
+
+    private void removeImage(String productId, Long imageId) {
+        ProductImage image = imageRepository.findById(imageId)
+                .orElseThrow(() -> ApiException.notFound("Image not found"));
+        if (!image.getProduct().getId().equals(productId))
+            throw ApiException.forbidden("Image does not belong to this product");
+        if (image.getCloudinaryId() != null)
+            cloudinaryService.deleteImage(image.getCloudinaryId());
+        imageRepository.delete(image);
+    }
+
+    private void applyFields(Product p, String name, int pricePence,
+                              String heroImage, String pieceStory,
+                              List<String> materials, String dimensions, String care) {
+        p.setName(name);
+        p.setPricePence(pricePence);
+        if (heroImage != null) {
+            String old = p.getHeroImage();
+            p.setHeroImage(heroImage);
+            if (old != null && !old.equals(heroImage)) {
+                String pid = cloudinaryService.extractPublicId(old);
+                if (pid != null) cloudinaryService.deleteImage(pid);
+            }
+        }
+        if (pieceStory != null) p.setPieceStory(pieceStory);
+        if (materials  != null) p.setMaterials(toJson(materials));
+        if (dimensions != null) p.setDimensions(dimensions);
+        if (care       != null) p.setCare(care);
+    }
+
+    private void purgeImages(Product product) {
+        List<String> ids = product.getImages().stream()
                 .map(ProductImage::getCloudinaryId)
                 .filter(id -> id != null && !id.isBlank())
                 .toList();
-        if (!publicIds.isEmpty()) {
-            cloudinaryService.deleteImages(publicIds);
-        }
-        // Also delete the heroImage URL which is stored directly on the product
-        // row (not in ProductImage) and would otherwise be orphaned in Cloudinary.
+        if (!ids.isEmpty()) cloudinaryService.deleteImages(ids);
         if (product.getHeroImage() != null && !product.getHeroImage().isBlank()) {
-            String heroPublicId = cloudinaryService.extractPublicId(product.getHeroImage());
-            if (heroPublicId != null) cloudinaryService.deleteImage(heroPublicId);
+            String pid = cloudinaryService.extractPublicId(product.getHeroImage());
+            if (pid != null) cloudinaryService.deleteImage(pid);
         }
     }
 
     private Product getOwnedProduct(String creatorId, String productId) {
-        Product product = productRepository.findActiveById(productId)
+        Product p = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
-        if (!product.getCreator().getId().equals(creatorId))
+        if (!p.getCreator().getId().equals(creatorId))
             throw ApiException.forbidden("You do not own this product");
-        return product;
+        return p;
+    }
+
+    private Sort resolveSort(String sort) {
+        return switch (sort != null ? sort : "newest") {
+            case "price_asc"  -> Sort.by("pricePence").ascending();
+            case "price_desc" -> Sort.by("pricePence").descending();
+            default           -> Sort.by("createdAt").descending();
+        };
     }
 
     private ProductStatus parseStatus(String status) {
@@ -215,17 +294,18 @@ public class ProductService {
                 .map(img -> new ProductImageDto(img.getId(), img.getUrl(),
                         img.isPrimary(), img.getDisplayOrder(), img.getAltText()))
                 .toList();
-        String heroImage = p.getHeroImage() != null ? p.getHeroImage()
+        String hero = p.getHeroImage() != null ? p.getHeroImage()
                 : images.stream().filter(ProductImageDto::isPrimary)
                         .findFirst().map(ProductImageDto::url).orElse(null);
         Creator c = p.getCreator();
         return new ProductDto(
-                p.getId(), p.getName(), p.getPricePence(), heroImage, images,
+                p.getId(), p.getName(), p.getPricePence(), hero, images,
                 p.getPieceStory(),
                 parseList(p.getMaterials(), new TypeReference<>() {}),
                 p.getDimensions(), p.getCare(), p.getStatus().name(),
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
-                        c.getRegion(), c.getCraft(), c.getPortraitImage()));
+                        c.getRegion(), c.getCraft(), c.getPortraitImage()),
+                p.isUkenaOwned());
     }
 
     private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {

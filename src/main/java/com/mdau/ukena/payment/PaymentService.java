@@ -8,6 +8,7 @@ import com.mdau.ukena.order.Order;
 import com.mdau.ukena.order.OrderItem;
 import com.mdau.ukena.order.OrderRepository;
 import com.mdau.ukena.order.OrderStatus;
+import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -57,11 +58,10 @@ public class PaymentService {
         if (order.getStatus() != OrderStatus.PENDING)
             throw ApiException.badRequest("Order is not in PENDING state");
 
-        String description = "Complete your Ukena order " + displayId;
-
         PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
                 order.getId(), displayId, order.getTotalPence(),
-                "GBP", order.getBuyerEmail(), order.getBuyerFullName(), description));
+                "GBP", order.getBuyerEmail(), order.getBuyerFullName(),
+                "Complete your Ukena order " + displayId));
 
         order.setGatewayRef(result.gatewayRef());
         orderRepository.save(order);
@@ -87,24 +87,22 @@ public class PaymentService {
             JsonNode node    = objectMapper.readTree(payload);
             String   event   = node.path("type").asText();
             log.info("Stripe webhook event: {}", event);
-
             if (!"checkout.session.completed".equalsIgnoreCase(event)) return;
 
             String sessionId = node.path("data").path("object").path("id").asText();
-            String displayId = node.path("data").path("object").path("client_reference_id").asText();
-            String status    = node.path("data").path("object").path("payment_status").asText();
-
-            log.info("Stripe webhook: sessionId={} displayId={} status={}", sessionId, displayId, status);
+            String displayId = node.path("data").path("object")
+                    .path("client_reference_id").asText();
+            String status    = node.path("data").path("object")
+                    .path("payment_status").asText();
 
             if (!"paid".equalsIgnoreCase(status)) return;
 
-            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
-                if (order.getStatus() == OrderStatus.PAID) {
-                    log.info("Order {} already PAID, skipping", displayId);
-                    return;
-                }
-                markOrderPaid(order, sessionId);
-            }, () -> log.warn("Stripe webhook: order not found for displayId={}", displayId));
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(
+                    order -> {
+                        if (order.getStatus() == OrderStatus.PAID) return;
+                        markOrderPaid(order, sessionId);
+                    },
+                    () -> log.warn("Stripe: order not found displayId={}", displayId));
 
         } catch (Exception e) {
             log.error("Stripe webhook parse error", e);
@@ -117,34 +115,28 @@ public class PaymentService {
             return;
         }
         try {
-            JsonNode node  = objectMapper.readTree(payload);
-            String   event = node.path("event").asText();
-            log.info("Paystack webhook event: {}", event);
-
+            JsonNode node      = objectMapper.readTree(payload);
+            String   event     = node.path("event").asText();
             if (!"charge.success".equalsIgnoreCase(event)) return;
 
             String reference = node.path("data").path("reference").asText();
             String status    = node.path("data").path("status").asText();
-
             if (!"success".equalsIgnoreCase(status)) return;
 
             String displayId = reference.contains("-")
                     ? reference.substring(0, reference.lastIndexOf('-'))
                     : reference;
 
-            log.info("Paystack webhook: ref={} displayId={}", reference, displayId);
-
-            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
-                if (order.getStatus() == OrderStatus.PAID) {
-                    log.info("Order {} already PAID, skipping", displayId);
-                    return;
-                }
-                if (paymentGateway.verifyPayment(reference)) {
-                    markOrderPaid(order, reference);
-                } else {
-                    log.warn("Paystack verify failed for reference={}", reference);
-                }
-            }, () -> log.warn("Paystack webhook: order not found for displayId={}", displayId));
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(
+                    order -> {
+                        if (order.getStatus() == OrderStatus.PAID) return;
+                        if (paymentGateway.verifyPayment(reference)) {
+                            markOrderPaid(order, reference);
+                        } else {
+                            log.warn("Paystack verify failed ref={}", reference);
+                        }
+                    },
+                    () -> log.warn("Paystack: order not found displayId={}", displayId));
 
         } catch (Exception e) {
             log.error("Paystack webhook parse error", e);
@@ -152,24 +144,20 @@ public class PaymentService {
     }
 
     private void markOrderPaid(Order order, String gatewayRef) {
-        // 1. Mark order PAID
         order.setStatus(OrderStatus.PAID);
         order.setGatewayRef(gatewayRef);
         order.setPaidAt(Instant.now());
         orderRepository.save(order);
 
-        // 2. Credit earnings ledger
         creditLedger(order);
 
-        // 3. Update payout balance — isolated transaction, failure won't roll back steps 1 & 2
         try {
             payoutUpdateService.updatePayoutRecord(order);
         } catch (Exception e) {
-            log.error("Payout balance update failed for order={} — needs manual reconciliation: {}",
+            log.error("Payout balance update failed order={}: {}",
                     order.getDisplayId(), e.getMessage());
         }
 
-        // 4. Notify buyer
         emailService.sendOrderConfirmation(
                 order.getBuyerEmail(), order.getBuyerFullName(),
                 order.getDisplayId(), order.getTotalPence(),
@@ -177,37 +165,52 @@ public class PaymentService {
                         .map(OrderItem::getCreatorFullName).distinct()
                         .collect(Collectors.joining(", ")));
 
-        // 5. Notify creators
-        sendCreatorOrderNotifications(order);
-
+        sendCreatorNotifications(order);
         log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
     }
 
+    /**
+     * Ledger rules:
+     *   Uken catalogue item  → status=PAID immediately, commissionRate=1.0, net=gross
+     *   Creator item         → status=PENDING, commissionRate from config, net=gross*(1-rate)
+     */
     private void creditLedger(Order order) {
         for (OrderItem item : order.getItems()) {
             if (item.getCreator() == null) continue;
+
+            boolean isUkenItem = ProductService.UKENA_CREATOR_ID
+                    .equals(item.getCreator().getId());
+
             int gross = item.getPricePence() * item.getQuantity();
-            int net = new BigDecimal(gross)
-                    .multiply(BigDecimal.ONE.subtract(commissionRate))
-                    .setScale(0, RoundingMode.HALF_UP)
-                    .intValue();
+            int net   = isUkenItem ? gross
+                    : new BigDecimal(gross)
+                            .multiply(BigDecimal.ONE.subtract(commissionRate))
+                            .setScale(0, RoundingMode.HALF_UP).intValue();
+
             ledgerRepository.save(EarningsLedger.builder()
                     .creatorId(item.getCreator().getId())
                     .artisanProfileId(item.getCreator().getId())
                     .orderId(order.getId())
                     .orderItemId(item.getId())
                     .grossPence(gross)
-                    .amountPence(net)   // amount_pence = net creator earnings
-                    .commissionRate(commissionRate)
+                    .amountPence(net)
+                    .commissionRate(isUkenItem ? BigDecimal.ONE : commissionRate)
                     .netPence(net)
-                    .status(LedgerStatus.PENDING)
+                    .status(isUkenItem ? LedgerStatus.PAID : LedgerStatus.PENDING)
                     .build());
+
+            if (isUkenItem)
+                log.info("Uken catalogue revenue: order={} product={} gross={}p",
+                        order.getDisplayId(), item.getProductName(), gross);
         }
     }
 
-    private void sendCreatorOrderNotifications(Order order) {
+    /** Skip Uken sentinel — no email goes to a creator for Uken-owned products. */
+    private void sendCreatorNotifications(Order order) {
         order.getItems().stream()
-                .filter(i -> i.getCreator() != null)
+                .filter(i -> i.getCreator() != null
+                          && !ProductService.UKENA_CREATOR_ID
+                                .equals(i.getCreator().getId()))
                 .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
                 .forEach((creatorId, items) -> {
                     OrderItem first = items.get(0);
@@ -216,19 +219,26 @@ public class PaymentService {
                                     user.getEmail(), user.getFullName(),
                                     order.getDisplayId(), first.getProductName(),
                                     items.stream().mapToInt(OrderItem::getQuantity).sum()),
-                            () -> log.warn("No user found for creatorId={}", creatorId));
+                            () -> log.warn("No user for creatorId={}", creatorId));
                 });
     }
 
     @Transactional
-    public PayoutResult gatewayPayout(String creatorId, String accountNumber, String accountName) {
+    public PayoutResult gatewayPayout(String creatorId,
+                                       String accountNumber, String accountName) {
+        if (ProductService.UKENA_CREATOR_ID.equals(creatorId))
+            throw ApiException.badRequest(
+                    "Cannot initiate payout for Uken platform account");
+
         int netPence = ledgerRepository
                 .sumNetPenceByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
         if (netPence <= 0)
             throw ApiException.badRequest("No pending earnings for creator " + creatorId);
+
         PayoutResult result = paymentGateway.initiateTransfer(new PayoutRequest(
                 creatorId, netPence, accountNumber, accountName,
                 "Ukena payout to " + accountName));
+
         if (result.success()) {
             List<EarningsLedger> entries = ledgerRepository
                     .findByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);

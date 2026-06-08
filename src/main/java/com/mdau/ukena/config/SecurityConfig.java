@@ -76,6 +76,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/orders").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/delivery-zones").permitAll()
+                .requestMatchers(HttpMethod.GET, "/catalogue").permitAll()
                 .requestMatchers(HttpMethod.GET,
                         "/creators", "/creators/*",
                         "/products", "/products/*",

@@ -12,6 +12,7 @@ public record ProductDto(
         List<String> materials,
         String dimensions,
         String care,
-        String status,        // ACTIVE | OUT_OF_STOCK | SUSPENDED_BY_CREATOR | SUSPENDED_BY_ADMIN
-        ProductCreatorDto creator
+        String status,
+        ProductCreatorDto creator,
+        boolean isUkenaOwned
 ) {}

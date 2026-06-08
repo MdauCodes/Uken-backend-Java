@@ -40,4 +40,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
 
     List<Order> findByBuyerEmailIgnoreCaseOrderByCreatedAtDesc(String email);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.status = com.mdau.ukena.order.OrderStatus.PAID")
+    long countPaidOrders();
 }

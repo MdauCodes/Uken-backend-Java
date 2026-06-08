@@ -2,6 +2,8 @@ package com.mdau.ukena.common;
 
 import com.mdau.ukena.admin.FeaturedSlot;
 import com.mdau.ukena.admin.FeaturedSlotRepository;
+import com.mdau.ukena.creator.Creator;
+import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
@@ -19,9 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DataSeeder implements ApplicationRunner {
 
-    private final UserRepository userRepository;
+    private final UserRepository         userRepository;
     private final FeaturedSlotRepository featuredSlotRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final CreatorRepository      creatorRepository;
+    private final PasswordEncoder        passwordEncoder;
 
     @Value("${ukena.admin.email:admin@ukena.co.uk}")
     private String adminEmail;
@@ -34,26 +37,24 @@ public class DataSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         seedSuperAdmin();
         seedFeaturedSlots();
+        seedUkenaCreator();
     }
 
     private void seedSuperAdmin() {
         if (userRepository.existsByEmail(adminEmail)) {
-            log.info("Superadmin already exists — skipping seed");
+            log.info("Superadmin already exists - skipping seed");
             return;
         }
-
         if (adminPassword == null || adminPassword.isBlank()) {
-            log.error("UKENA_ADMIN_PASSWORD env variable not set — superadmin not created");
+            log.error("UKENA_ADMIN_PASSWORD env variable not set - superadmin not created");
             return;
         }
-
         User superAdmin = User.builder()
                 .email(adminEmail)
                 .passwordHash(passwordEncoder.encode(adminPassword))
                 .fullName("Ukena Superadmin")
                 .role(UserRole.ROLE_ADMIN)
                 .build();
-
         userRepository.save(superAdmin);
         log.info("Superadmin created: {}", adminEmail);
     }
@@ -62,10 +63,26 @@ public class DataSeeder implements ApplicationRunner {
         for (int i = 1; i <= 4; i++) {
             int position = i;
             if (!featuredSlotRepository.existsById(position)) {
-                featuredSlotRepository.save(
-                        new FeaturedSlot(position, null, null));
+                featuredSlotRepository.save(new FeaturedSlot(position, null, null));
                 log.info("Featured slot {} initialised", position);
             }
         }
+    }
+
+    private void seedUkenaCreator() {
+        if (creatorRepository.existsById("ukena")) return;
+        Creator ukena = Creator.builder()
+                .id("ukena")
+                .firstName("Uken")
+                .fullName("Uken")
+                .craft("General")
+                .region("United Kingdom")
+                .hook("Uken's own curated catalogue")
+                .image("")
+                .portraitImage("")
+                .headerImage("")
+                .build();
+        creatorRepository.save(ukena);
+        log.info("Seeded Uken sentinel creator");
     }
 }

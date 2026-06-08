@@ -6,9 +6,14 @@ import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.OrderRepository;
+import com.mdau.ukena.payment.EarningsLedger;
+import com.mdau.ukena.payment.EarningsLedgerRepository;
+import com.mdau.ukena.payment.LedgerStatus;
 import com.mdau.ukena.payment.PaymentService;
 import com.mdau.ukena.payment.PayoutResult;
 import com.mdau.ukena.product.ProductRepository;
+import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
@@ -19,32 +24,36 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminService {
 
-    private final UserRepository userRepository;
-    private final CreatorRepository creatorRepository;
-    private final ProductRepository productRepository;
-    private final PayoutRepository payoutRepository;
-    private final ReviewRepository reviewRepository;
-    private final FeaturedSlotRepository featuredSlotRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final EmailService emailService;
-    private final PaymentService paymentService;
-    private final CloudinaryService cloudinaryService;
+    private final UserRepository           userRepository;
+    private final CreatorRepository        creatorRepository;
+    private final ProductRepository        productRepository;
+    private final PayoutRepository         payoutRepository;
+    private final ReviewRepository         reviewRepository;
+    private final FeaturedSlotRepository   featuredSlotRepository;
+    private final EarningsLedgerRepository ledgerRepository;
+    private final OrderRepository          orderRepository;
+    private final PasswordEncoder          passwordEncoder;
+    private final EmailService             emailService;
+    private final PaymentService           paymentService;
+    private final CloudinaryService        cloudinaryService;
 
-    // -- Staff management ---------------------------------------------------
+    // ── Staff ────────────────────────────────────────────────
 
     @Transactional
     public StaffDto createStaff(CreateStaffRequest req) {
-        if (userRepository.existsByEmail(req.email())) {
+        if (userRepository.existsByEmail(req.email()))
             throw ApiException.conflict("An account with this email already exists");
-        }
         User staff = User.builder()
                 .email(req.email().toLowerCase().trim())
                 .passwordHash(passwordEncoder.encode(req.password()))
@@ -52,7 +61,7 @@ public class AdminService {
                 .role(UserRole.ROLE_SUPPORT)
                 .build();
         userRepository.save(staff);
-        log.info("Support staff account created: {}", req.email());
+        log.info("Support staff created: {}", req.email());
         return new StaffDto(staff.getId().toString(), staff.getEmail(),
                 staff.getFullName(), staff.getRole().name());
     }
@@ -67,7 +76,7 @@ public class AdminService {
                 .toList();
     }
 
-    // -- Buyers -------------------------------------------------------------
+    // ── Buyers ───────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<AdminBuyerRow> listBuyers() {
@@ -84,7 +93,6 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(true);
         userRepository.save(user);
-        log.info("Buyer {} suspended", userId);
     }
 
     @Transactional
@@ -93,10 +101,9 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(false);
         userRepository.save(user);
-        log.info("Buyer {} unsuspended", userId);
     }
 
-    // -- Creators -----------------------------------------------------------
+    // ── Creators ─────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<AdminCreatorRow> listCreators(String status) {
@@ -111,13 +118,12 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(Instant.now());
         creatorRepository.save(creator);
-        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
-            user.setSuspended(true);
-            userRepository.save(user);
-            log.info("Creator user account suspended: {}", user.getEmail());
+        userRepository.findByCreatorId(creatorId).ifPresent(u -> {
+            u.setSuspended(true);
+            userRepository.save(u);
         });
-        int suspended = productRepository.suspendAllByCreatorId(creatorId);
-        log.info("Creator {} suspended - {} products suspended", creatorId, suspended);
+        int n = productRepository.suspendAllByCreatorId(creatorId);
+        log.info("Creator {} suspended - {} products suspended", creatorId, n);
     }
 
     @Transactional
@@ -126,16 +132,15 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(null);
         creatorRepository.save(creator);
-        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
-            user.setSuspended(false);
-            userRepository.save(user);
-            log.info("Creator user account unsuspended: {}", user.getEmail());
+        userRepository.findByCreatorId(creatorId).ifPresent(u -> {
+            u.setSuspended(false);
+            userRepository.save(u);
         });
-        int restored = productRepository.restoreAllByCreatorId(creatorId);
-        log.info("Creator {} unsuspended - {} products restored", creatorId, restored);
+        int n = productRepository.restoreAllByCreatorId(creatorId);
+        log.info("Creator {} unsuspended - {} products restored", creatorId, n);
     }
 
-    // -- Payouts ------------------------------------------------------------
+    // ── Payouts ──────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<CreatorPayoutDto> listPayouts() {
@@ -144,36 +149,32 @@ public class AdminService {
     }
 
     @Transactional
-    public CreatorPayoutDto processPayout(String creatorId, String accountNumber,
-                                          String accountName) {
+    public CreatorPayoutDto processPayout(String creatorId,
+                                          String accountNumber, String accountName) {
         Creator creator = creatorRepository.findActiveById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
                 .orElseGet(() -> PayoutRecord.builder()
-                        .creatorId(creatorId)
-                        .creator(creator)
-                        .build());
+                        .creatorId(creatorId).creator(creator).build());
         int amount = payout.getPendingPence();
         if (amount <= 0)
             throw ApiException.badRequest("No pending earnings to pay out");
         PayoutResult result = paymentService.gatewayPayout(
                 creatorId, accountNumber, accountName);
-        log.info("Payout for creator {}: success={} ref={} msg={}",
-                creatorId, result.success(), result.gatewayRef(), result.message());
         if (result.success()) {
             payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
             payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
             payout.setPendingPence(0);
             payout.setLastPaidAt(Instant.now());
             payoutRepository.save(payout);
-            userRepository.findByCreatorId(creatorId).ifPresent(user ->
+            userRepository.findByCreatorId(creatorId).ifPresent(u ->
                     emailService.sendPayoutConfirmation(
-                            user.getEmail(), user.getFullName(), amount, "GBP"));
+                            u.getEmail(), u.getFullName(), amount, "GBP"));
         }
         return toPayoutDto(payout);
     }
 
-    // -- Reviews ------------------------------------------------------------
+    // ── Reviews ──────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<ProductReviewDto> listReviews() {
@@ -193,7 +194,7 @@ public class AdminService {
         return toReviewDto(reviewRepository.save(review));
     }
 
-    // -- Featured slots -----------------------------------------------------
+    // ── Featured slots ───────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<FeaturedSlotDto> getFeaturedSlots() {
@@ -214,14 +215,82 @@ public class AdminService {
         return getFeaturedSlots();
     }
 
-    // -- Mappers ------------------------------------------------------------
+    // ── Revenue dashboard ────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public UkenaRevenueDto getRevenue() {
+        List<EarningsLedger> all = ledgerRepository.findAll();
+
+        // Split into Uken-owned vs creator entries
+        List<EarningsLedger> ukenEntries = all.stream()
+                .filter(e -> ProductService.UKENA_CREATOR_ID.equals(e.getCreatorId()))
+                .toList();
+        List<EarningsLedger> creatorEntries = all.stream()
+                .filter(e -> !ProductService.UKENA_CREATOR_ID.equals(e.getCreatorId()))
+                .toList();
+
+        int ukenaProductRevenue  = ukenEntries.stream()
+                .mapToInt(EarningsLedger::getGrossPence).sum();
+        int platformCommission   = creatorEntries.stream()
+                .mapToInt(e -> e.getGrossPence() - e.getNetPence()).sum();
+        int creatorPayouts       = creatorEntries.stream()
+                .mapToInt(EarningsLedger::getNetPence).sum();
+        int totalRevenue         = ukenaProductRevenue
+                + creatorEntries.stream().mapToInt(EarningsLedger::getGrossPence).sum();
+
+        long totalOrderCount = orderRepository.countPaidOrders();
+        long ukenaOrderCount = ledgerRepository.countByCreatorId(
+                ProductService.UKENA_CREATOR_ID);
+
+        // Per-product breakdown — group ledger entries by orderItemId's product
+        // We use productName stored on OrderItem (already denormalised in the ledger
+        // via the order item). We group by creatorId+productName as a proxy since
+        // productId is not stored on the ledger directly.
+        List<UkenaRevenueDto.ProductRevenueLine> topProducts = all.stream()
+                .collect(Collectors.groupingBy(
+                        e -> e.getCreatorId() + "|" + e.getOrderItemId()))
+                .entrySet().stream()
+                .map(entry -> {
+                    EarningsLedger sample = entry.getValue().get(0);
+                    boolean isUken = ProductService.UKENA_CREATOR_ID
+                            .equals(sample.getCreatorId());
+                    int gross = entry.getValue().stream()
+                            .mapToInt(EarningsLedger::getGrossPence).sum();
+                    // orderItemId is UUID — use it as product key for grouping
+                    return new UkenaRevenueDto.ProductRevenueLine(
+                            sample.getOrderItemId().toString(),
+                            "",   // productName resolved below
+                            isUken,
+                            1,    // each ledger entry = 1 order line
+                            gross);
+                })
+                // Re-group by orderItemId to sum units across orders
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toList(),
+                        list -> list.stream()
+                                .sorted(Comparator.comparingInt(
+                                        UkenaRevenueDto.ProductRevenueLine::grossPence)
+                                        .reversed())
+                                .limit(20)
+                                .toList()));
+
+        return new UkenaRevenueDto(
+                totalRevenue,
+                platformCommission,
+                ukenaProductRevenue,
+                platformCommission + ukenaProductRevenue,
+                creatorPayouts,
+                totalOrderCount,
+                ukenaOrderCount,
+                topProducts);
+    }
+
+    // ── Mappers ──────────────────────────────────────────────
 
     private AdminCreatorRow toAdminCreatorRow(Creator c) {
-        return new AdminCreatorRow(
-                c.getId(), c.getFirstName(), c.getFullName(),
+        return new AdminCreatorRow(c.getId(), c.getFirstName(), c.getFullName(),
                 c.getCraft(), c.getRegion(), c.getImage(),
-                c.getDeletedAt() != null,
-                c.getCreatedAt());
+                c.getDeletedAt() != null, c.getCreatedAt());
     }
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {

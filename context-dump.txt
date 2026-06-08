@@ -1,0 +1,2293 @@
+package com.mdau.ukena.product;
+
+import com.mdau.ukena.creator.Creator;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+@Entity
+@Table(name = "products", indexes = {
+        @Index(name = "idx_products_creator_id",       columnList = "creator_id"),
+        @Index(name = "idx_products_status",           columnList = "status"),
+        @Index(name = "idx_products_deleted_at",       columnList = "deleted_at"),
+        @Index(name = "idx_products_created_at",       columnList = "created_at"),
+        @Index(name = "idx_products_creator_status",   columnList = "creator_id,status"),
+        @Index(name = "idx_products_price",            columnList = "price_pence")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class Product {
+
+    @Id
+    @Column(length = 80)
+    private String id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "creator_id", nullable = false)
+    private Creator creator;
+
+    @Column(nullable = false, length = 200)
+    private String name;
+
+    @Column(name = "price_pence", nullable = false)
+    private int pricePence;
+
+    @Column(name = "hero_image", columnDefinition = "TEXT")
+    private String heroImage;
+
+    @Column(name = "piece_story", columnDefinition = "TEXT")
+    private String pieceStory;
+
+    // JSON array of strings — kept for materials list
+    @Column(columnDefinition = "TEXT")
+    @Builder.Default
+    private String materials = "[]";
+
+    @Column(length = 200)
+    private String dimensions;
+
+    @Column(columnDefinition = "TEXT")
+    private String care;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    @Builder.Default
+    private ProductStatus status = ProductStatus.ACTIVE;
+
+    // Images now in a proper table — gallery JSON removed
+    @OneToMany(mappedBy = "product",
+               cascade = CascadeType.ALL,
+               orphanRemoval = true,
+               fetch = FetchType.LAZY)
+    @OrderBy("displayOrder ASC")
+    @Builder.Default
+    private List<ProductImage> images = new ArrayList<>();
+
+    // Soft-delete — never hard-delete a product
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+}
+package com.mdau.ukena.product;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.cloudinary.CloudinaryService;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.creator.Creator;
+import com.mdau.ukena.creator.CreatorRepository;
+import com.mdau.ukena.product.dto.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.text.Normalizer;
+import java.time.Instant;
+import java.util.List;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ProductService {
+
+    private final ProductRepository productRepository;
+    private final ProductImageRepository imageRepository;
+    private final CreatorRepository creatorRepository;
+    private final CloudinaryService cloudinaryService;
+    private final ObjectMapper objectMapper;
+
+    @Transactional(readOnly = true)
+    public Page<ProductDto> browse(String creatorId, Integer minPrice,
+                                   Integer maxPrice, String sort,
+                                   int page, int size) {
+        Sort sorting = switch (sort != null ? sort : "newest") {
+            case "price_asc"  -> Sort.by("pricePence").ascending();
+            case "price_desc" -> Sort.by("pricePence").descending();
+            default           -> Sort.by("createdAt").descending();
+        };
+        Pageable pageable = PageRequest.of(page, size, sorting);
+        return productRepository.browse(creatorId, minPrice, maxPrice, pageable)
+                .map(this::toDto);
+    }
+
+    @Transactional(readOnly = true)
+    public ProductDto getById(String id) {
+        return productRepository.findActiveById(id)
+                .filter(p -> p.getStatus() != ProductStatus.SUSPENDED_BY_ADMIN
+                          && p.getStatus() != ProductStatus.SUSPENDED_BY_CREATOR)
+                .map(this::toDto)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+    }
+
+    @Transactional
+    public ProductDto create(String creatorId, ProductCreateRequest req) {
+        Creator creator = creatorRepository.findActiveById(creatorId)
+                .orElseThrow(() -> ApiException.forbidden("No active creator profile found"));
+        String slug = generateSlug(req.name());
+        Product product = Product.builder()
+                .id(slug).creator(creator).name(req.name())
+                .pricePence(req.pricePence()).heroImage(req.heroImage())
+                .pieceStory(req.pieceStory())
+                .materials(toJson(req.materials()))
+                .dimensions(req.dimensions()).care(req.care())
+                .status(ProductStatus.ACTIVE)
+                .build();
+        return toDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductDto update(String creatorId, String productId,
+                             ProductUpdateRequest req) {
+        Product product = getOwnedProduct(creatorId, productId);
+        product.setName(req.name());
+        product.setPricePence(req.pricePence());
+        if (req.heroImage() != null) {
+            String oldHero = product.getHeroImage();
+            product.setHeroImage(req.heroImage());
+            if (oldHero != null && !oldHero.equals(req.heroImage())) {
+                String pid = cloudinaryService.extractPublicId(oldHero);
+                if (pid != null) cloudinaryService.deleteImage(pid);
+            }
+        }
+        if (req.pieceStory() != null) product.setPieceStory(req.pieceStory());
+        if (req.materials()  != null) product.setMaterials(toJson(req.materials()));
+        if (req.dimensions() != null) product.setDimensions(req.dimensions());
+        if (req.care()       != null) product.setCare(req.care());
+        return toDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductDto updateStatusByCreator(String creatorId, String productId,
+                                            ProductStatusUpdateRequest req) {
+        Product product = getOwnedProduct(creatorId, productId);
+        ProductStatus newStatus = parseStatus(req.status());
+        if (newStatus == ProductStatus.SUSPENDED_BY_ADMIN)
+            throw ApiException.forbidden("Only admins can set SUSPENDED_BY_ADMIN");
+        product.setStatus(newStatus);
+        return toDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductDto updateStatusByAdmin(String productId,
+                                          ProductStatusUpdateRequest req) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        product.setStatus(parseStatus(req.status()));
+        return toDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public void delete(String creatorId, String productId) {
+        Product product = getOwnedProduct(creatorId, productId);
+        deleteProductImages(product);
+        product.setDeletedAt(Instant.now());
+        productRepository.save(product);
+        log.info("Product {} soft-deleted", productId);
+    }
+
+    @Transactional
+    public void adminDelete(String productId) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        deleteProductImages(product);
+        product.setDeletedAt(Instant.now());
+        productRepository.save(product);
+        log.info("Product {} soft-deleted by admin", productId);
+    }
+
+    @Transactional
+    public ProductDto addImage(String creatorId, String productId,
+                               AddImageRequest req) {
+        Product product = getOwnedProduct(creatorId, productId);
+        if (req.isPrimary()) {
+            product.getImages().forEach(img -> img.setPrimary(false));
+        }
+        ProductImage image = ProductImage.builder()
+                .product(product).url(req.url())
+                .cloudinaryId(req.cloudinaryId())
+                .isPrimary(req.isPrimary())
+                .displayOrder(req.displayOrder())
+                .altText(req.altText())
+                .build();
+        product.getImages().add(image);
+        return toDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public void deleteImage(String creatorId, String productId, Long imageId) {
+        getOwnedProduct(creatorId, productId);
+        ProductImage image = imageRepository.findById(imageId)
+                .orElseThrow(() -> ApiException.notFound("Image not found"));
+        if (!image.getProduct().getId().equals(productId))
+            throw ApiException.forbidden("Image does not belong to this product");
+        // Delete from Cloudinary
+        if (image.getCloudinaryId() != null) {
+            cloudinaryService.deleteImage(image.getCloudinaryId());
+        }
+        imageRepository.delete(image);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductDto> getByCreator(String creatorId) {
+        return productRepository.findByCreatorIdNotDeleted(creatorId)
+                .stream().map(this::toDto).toList();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+
+    private void deleteProductImages(Product product) {
+        // Delete child ProductImage records from Cloudinary.
+        List<String> publicIds = product.getImages().stream()
+                .map(ProductImage::getCloudinaryId)
+                .filter(id -> id != null && !id.isBlank())
+                .toList();
+        if (!publicIds.isEmpty()) {
+            cloudinaryService.deleteImages(publicIds);
+        }
+        // Also delete the heroImage URL which is stored directly on the product
+        // row (not in ProductImage) and would otherwise be orphaned in Cloudinary.
+        if (product.getHeroImage() != null && !product.getHeroImage().isBlank()) {
+            String heroPublicId = cloudinaryService.extractPublicId(product.getHeroImage());
+            if (heroPublicId != null) cloudinaryService.deleteImage(heroPublicId);
+        }
+    }
+
+    private Product getOwnedProduct(String creatorId, String productId) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        if (!product.getCreator().getId().equals(creatorId))
+            throw ApiException.forbidden("You do not own this product");
+        return product;
+    }
+
+    private ProductStatus parseStatus(String status) {
+        try { return ProductStatus.valueOf(status.toUpperCase()); }
+        catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Invalid product status: " + status); }
+    }
+
+    private String generateSlug(String name) {
+        String base = "p-" + Normalizer.normalize(name, Normalizer.Form.NFD)
+                .replaceAll("[^\\p{ASCII}]", "").toLowerCase()
+                .replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+        String slug = base;
+        int count = 1;
+        while (productRepository.existsById(slug)) slug = base + "-" + count++;
+        return slug;
+    }
+
+    ProductDto toDto(Product p) {
+        List<ProductImageDto> images = p.getImages().stream()
+                .map(img -> new ProductImageDto(img.getId(), img.getUrl(),
+                        img.isPrimary(), img.getDisplayOrder(), img.getAltText()))
+                .toList();
+        String heroImage = p.getHeroImage() != null ? p.getHeroImage()
+                : images.stream().filter(ProductImageDto::isPrimary)
+                        .findFirst().map(ProductImageDto::url).orElse(null);
+        Creator c = p.getCreator();
+        return new ProductDto(
+                p.getId(), p.getName(), p.getPricePence(), heroImage, images,
+                p.getPieceStory(),
+                parseList(p.getMaterials(), new TypeReference<>() {}),
+                p.getDimensions(), p.getCare(), p.getStatus().name(),
+                new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
+                        c.getRegion(), c.getCraft(), c.getPortraitImage()));
+    }
+
+    private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {
+        if (json == null || json.isBlank()) return List.of();
+        try { return objectMapper.readValue(json, ref); }
+        catch (Exception e) { return List.of(); }
+    }
+
+    private String toJson(Object obj) {
+        if (obj == null) return "[]";
+        try { return objectMapper.writeValueAsString(obj); }
+        catch (Exception e) { return "[]"; }
+    }
+}
+package com.mdau.ukena.product;
+
+import com.mdau.ukena.common.ApiResponse;
+import com.mdau.ukena.product.dto.*;
+import com.mdau.ukena.security.CurrentUser;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+public class ProductController {
+
+    private final ProductService productService;
+
+    // ── Public ────────────────────────────────────────────────────
+
+    @GetMapping("/products")
+    public ResponseEntity<ApiResponse<Page<ProductDto>>> browse(
+            @RequestParam(required = false) String creatorId,
+            @RequestParam(required = false) Integer minPrice,
+            @RequestParam(required = false) Integer maxPrice,
+            @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "12") int size) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.browse(creatorId, minPrice, maxPrice, sort, page, size)));
+    }
+
+    @GetMapping("/products/{id}")
+    public ResponseEntity<ApiResponse<ProductDto>> getOne(@PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.getById(id)));
+    }
+
+    // ── Creator CRUD ──────────────────────────────────────────────
+
+    @GetMapping("/creators/me/products")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<List<ProductDto>>> myProducts(
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.getByCreator(currentUser.creatorId())));
+    }
+
+    @PostMapping("/creators/me/products")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<ProductDto>> create(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @Valid @RequestBody ProductCreateRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(
+                        productService.create(currentUser.creatorId(), req),
+                        "Product created"));
+    }
+
+    @PutMapping("/creators/me/products/{id}")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<ProductDto>> update(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id,
+            @Valid @RequestBody ProductUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.update(currentUser.creatorId(), id, req)));
+    }
+
+    @PatchMapping("/creators/me/products/{id}/status")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<ProductDto>> updateStatus(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id,
+            @Valid @RequestBody ProductStatusUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.updateStatusByCreator(currentUser.creatorId(), id, req)));
+    }
+
+    @DeleteMapping("/creators/me/products/{id}")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<Void> delete(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id) {
+        productService.delete(currentUser.creatorId(), id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Image management ──────────────────────────────────────────
+
+    @PostMapping("/creators/me/products/{id}/images")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<ProductDto>> addImage(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id,
+            @Valid @RequestBody AddImageRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.addImage(currentUser.creatorId(), id, req)));
+    }
+
+    @DeleteMapping("/creators/me/products/{id}/images/{imageId}")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<Void> deleteImage(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id,
+            @PathVariable Long imageId) {
+        productService.deleteImage(currentUser.creatorId(), id, imageId);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Admin ─────────────────────────────────────────────────────
+
+    @PatchMapping("/admin/products/{id}/status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> adminUpdateStatus(
+            @PathVariable String id,
+            @Valid @RequestBody ProductStatusUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.updateStatusByAdmin(id, req)));
+    }
+
+    @DeleteMapping("/admin/products/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> adminDelete(@PathVariable String id) {
+        productService.adminDelete(id);
+        return ResponseEntity.noContent().build();
+    }
+}
+package com.mdau.ukena.product;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import java.util.List;
+import java.util.Optional;
+
+public interface ProductRepository extends JpaRepository<Product, String> {
+
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND (:creatorId IS NULL OR p.creator.id = :creatorId)
+        AND (:minPrice IS NULL OR p.pricePence >= :minPrice)
+        AND (:maxPrice IS NULL OR p.pricePence <= :maxPrice)
+        ORDER BY p.createdAt DESC
+    """)
+    Page<Product> browse(
+            @Param("creatorId") String creatorId,
+            @Param("minPrice")  Integer minPrice,
+            @Param("maxPrice")  Integer maxPrice,
+            Pageable pageable);
+
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.deletedAt IS NULL
+        AND p.creator.id = :creatorId
+        ORDER BY p.createdAt DESC
+    """)
+    List<Product> findByCreatorIdNotDeleted(@Param("creatorId") String creatorId);
+
+    @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
+    Optional<Product> findActiveById(@Param("id") String id);
+
+    boolean existsByIdAndCreatorId(String id, String creatorId);
+
+    @Query("""
+        SELECT p FROM Product p
+        JOIN FETCH p.creator c
+        WHERE p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND (LOWER(p.name)       LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(p.pieceStory) LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(c.craft)      LIKE LOWER(CONCAT('%', :q, '%')))
+    """)
+    Page<Product> search(@Param("q") String q, Pageable pageable);
+
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.status =
+        com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+        AND p.status <> com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+    """)
+    int suspendAllByCreatorId(@Param("creatorId") String creatorId);
+
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.status =
+        com.mdau.ukena.product.ProductStatus.ACTIVE
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.SUSPENDED_BY_ADMIN
+    """)
+    int restoreAllByCreatorId(@Param("creatorId") String creatorId);
+
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.creator.id = :creatorId
+        AND p.deletedAt IS NULL
+    """)
+    List<Product> findByCreatorId(@Param("creatorId") String creatorId);
+}
+package com.mdau.ukena.product.dto;
+
+import jakarta.validation.constraints.*;
+import java.util.List;
+
+public record ProductCreateRequest(
+        @NotBlank @Size(max = 200) String name,
+        @Min(1) @Max(10_000_000) int pricePence,
+        @NotBlank String heroImage,
+        @NotBlank @Size(max = 4000) String pieceStory,
+        @Size(max = 20) List<String> materials,
+        @Size(max = 200) String dimensions,
+        String care
+) {}
+package com.mdau.ukena.product.dto;
+
+import java.util.List;
+
+public record ProductDto(
+        String id,
+        String name,
+        int pricePence,
+        String heroImage,
+        List<ProductImageDto> images,
+        String pieceStory,
+        List<String> materials,
+        String dimensions,
+        String care,
+        String status,        // ACTIVE | OUT_OF_STOCK | SUSPENDED_BY_CREATOR | SUSPENDED_BY_ADMIN
+        ProductCreatorDto creator
+) {}
+package com.mdau.ukena.product.dto;
+
+public record ProductSummaryDto(
+        String id,
+        String name,
+        int    pricePence,
+        String heroImage,
+        String creatorId,
+        String creatorName,
+        String craft
+) {}
+package com.mdau.ukena.product;
+
+public enum ProductStatus {
+    ACTIVE,                // visible and purchasable
+    OUT_OF_STOCK,          // creator marked it — visible but not purchasable
+    SUSPENDED_BY_CREATOR,  // creator hid it temporarily
+    SUSPENDED_BY_ADMIN     // admin suspended — not visible to buyers
+}
+package com.mdau.ukena.product;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+@Entity
+@Table(name = "product_images", indexes = {
+        @Index(name = "idx_product_images_product_id", columnList = "product_id"),
+        @Index(name = "idx_product_images_primary", columnList = "product_id,is_primary")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class ProductImage {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id", nullable = false)
+    private Product product;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String url;
+
+    // Cloudinary public_id — needed to delete from Cloudinary
+    @Column(name = "cloudinary_id", length = 200)
+    private String cloudinaryId;
+
+    @Column(name = "is_primary", nullable = false)
+    @Builder.Default
+    private boolean isPrimary = false;
+
+    @Column(name = "display_order", nullable = false)
+    @Builder.Default
+    private int displayOrder = 0;
+
+    @Column(name = "alt_text", length = 200)
+    private String altText;
+}
+package com.mdau.ukena.creator;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+import java.time.Instant;
+
+@Entity
+@Table(name = "creators", indexes = {
+        @Index(name = "idx_creators_craft",      columnList = "craft"),
+        @Index(name = "idx_creators_region",     columnList = "region"),
+        @Index(name = "idx_creators_deleted_at", columnList = "deleted_at"),
+        @Index(name = "idx_creators_created_at", columnList = "created_at")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class Creator {
+
+    @Id
+    @Column(length = 80)
+    private String id;
+
+    @Column(name = "first_name", nullable = false, length = 80)
+    private String firstName;
+
+    @Column(name = "full_name", nullable = false, length = 120)
+    private String fullName;
+
+    @Column(nullable = false, length = 120)
+    private String craft;
+
+    @Column(nullable = false, length = 120)
+    private String region;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String hook;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String image;
+
+    @Column(name = "portrait_image", nullable = false, columnDefinition = "TEXT")
+    private String portraitImage;
+
+    @Column(name = "header_image", nullable = false, columnDefinition = "TEXT")
+    private String headerImage;
+
+    @Column(name = "story_paragraphs", columnDefinition = "TEXT")
+    @Builder.Default
+    private String storyParagraphs = "[]";
+
+    @Column(name = "pull_quote", columnDefinition = "TEXT")
+    private String pullQuote;
+
+    @Column(name = "process_steps", columnDefinition = "TEXT")
+    @Builder.Default
+    private String processSteps = "[]";
+
+    @Column(name = "cultural_meaning", columnDefinition = "TEXT")
+    @Builder.Default
+    private String culturalMeaning = "[]";
+
+    @Column(name = "map_pin", columnDefinition = "TEXT")
+    private String mapPin;
+
+    // Soft-delete — orders and products retain the creator reference
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+}
+package com.mdau.ukena.user;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "users", indexes = {
+        @Index(name = "idx_users_email", columnList = "email"),
+        @Index(name = "idx_users_creator_id", columnList = "creator_id"),
+        @Index(name = "idx_users_role", columnList = "role")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(nullable = false, unique = true, length = 254)
+    private String email;
+
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Column(name = "full_name", nullable = false, length = 120)
+    private String fullName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private UserRole role = UserRole.ROLE_BUYER;
+
+    @Column(name = "creator_id", length = 80)
+    private String creatorId;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean suspended = false;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+}
+package com.mdau.ukena.user;
+
+public enum UserRole {
+    ROLE_BUYER,
+    ROLE_CREATOR,
+    ROLE_ADMIN,
+    ROLE_SUPPORT    // Staff — can view and manage but cannot delete or modify critical records
+}
+package com.mdau.ukena.order;
+
+import com.mdau.ukena.user.User;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+@Entity
+@Table(name = "orders", indexes = {
+        @Index(name = "idx_orders_display_id",       columnList = "display_id"),
+        @Index(name = "idx_orders_buyer_id",         columnList = "buyer_user_id"),
+        @Index(name = "idx_orders_status",           columnList = "status"),
+        @Index(name = "idx_orders_created_at",       columnList = "created_at"),
+        @Index(name = "idx_orders_buyer_created",    columnList = "buyer_user_id,created_at"),
+        @Index(name = "idx_orders_pending_reminder", columnList = "status,created_at,reminder_sent_at")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class Order {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "display_id", unique = true, nullable = false, length = 20)
+    private String displayId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "buyer_user_id")
+    private User buyer;
+
+    @Column(name = "buyer_full_name", nullable = false, length = 120)
+    private String buyerFullName;
+
+    @Column(name = "buyer_email", nullable = false, length = 254)
+    private String buyerEmail;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private OrderStatus status = OrderStatus.PENDING;
+
+    @Column(name = "shipping_pence", nullable = false)
+    @Builder.Default
+    private int shippingPence = 0;
+
+    @Column(name = "delivery_zone_id")
+    private UUID deliveryZoneId;
+
+    @Column(name = "total_pence", nullable = false)
+    private int totalPence;
+
+    @Column(columnDefinition = "TEXT", nullable = false)
+    private String delivery;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL,
+               orphanRemoval = true, fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<OrderItem> items = new ArrayList<>();
+
+    @Column(name = "gateway_ref", length = 120)
+    private String gatewayRef;
+
+    @Column(name = "paid_at")
+    private Instant paidAt;
+
+    @Column(name = "reminder_sent_at")
+    private Instant reminderSentAt;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+}
+package com.mdau.ukena.order;
+
+import com.mdau.ukena.creator.Creator;
+import com.mdau.ukena.product.Product;
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "order_items", indexes = {
+        @Index(name = "idx_order_items_order_id", columnList = "order_id"),
+        @Index(name = "idx_order_items_creator_id", columnList = "creator_id"),
+        @Index(name = "idx_order_items_product_id", columnList = "product_id")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class OrderItem {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id", nullable = false)
+    private Order order;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id")
+    private Product product;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "creator_id")
+    private Creator creator;
+
+    @Column(name = "product_name", nullable = false, length = 200)
+    private String productName;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private int quantity = 1;
+
+    @Column(name = "price_pence", nullable = false)
+    private int pricePence;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String image;
+
+    @Column(name = "creator_full_name", nullable = false, length = 120)
+    private String creatorFullName;
+
+    @Column(name = "creator_region", nullable = false, length = 120)
+    private String creatorRegion;
+}
+package com.mdau.ukena.order;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.delivery.DeliveryZone;
+import com.mdau.ukena.delivery.DeliveryZoneService;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.dto.*;
+import com.mdau.ukena.product.Product;
+import com.mdau.ukena.product.ProductRepository;
+import com.mdau.ukena.product.ProductStatus;
+import com.mdau.ukena.user.User;
+import com.mdau.ukena.user.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final OrderRepository     orderRepository;
+    private final ProductRepository   productRepository;
+    private final UserRepository      userRepository;
+    private final DeliveryZoneService deliveryZoneService;
+    private final ObjectMapper        objectMapper;
+    private final EmailService        emailService;
+
+    @Transactional
+    public OrderDto place(User buyer, CreateOrderRequest req) {
+        String buyerEmail    = buyer != null ? buyer.getEmail()    : req.guestEmail().toLowerCase().trim();
+        String buyerFullName = buyer != null ? buyer.getFullName() : req.guestFullName().trim();
+
+        DeliveryZone zone = deliveryZoneService.getActiveById(req.deliveryZoneId());
+
+        List<OrderItem> items = req.items().stream().map(itemReq -> {
+            Product product = productRepository.findActiveById(itemReq.productId())
+                    .orElseThrow(() -> ApiException.notFound(
+                            "Product not found: " + itemReq.productId()));
+            if (product.getStatus() != ProductStatus.ACTIVE) {
+                throw ApiException.badRequest(
+                        product.getStatus() == ProductStatus.OUT_OF_STOCK
+                                ? product.getName() + " is currently out of stock"
+                                : product.getName() + " is not available for purchase");
+            }
+            return OrderItem.builder()
+                    .product(product)
+                    .creator(product.getCreator())
+                    .productName(product.getName())
+                    .quantity(itemReq.quantity())
+                    .pricePence(product.getPricePence())
+                    .image(product.getHeroImage())
+                    .creatorFullName(product.getCreator().getFullName())
+                    .creatorRegion(product.getCreator().getRegion())
+                    .build();
+        }).toList();
+
+        int productsTotalPence = items.stream()
+                .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
+        int shippingPence = zone.getShippingPence();
+        int totalPence    = productsTotalPence + shippingPence;
+
+        Order order = Order.builder()
+                .displayId(generateDisplayId())
+                .buyer(buyer)
+                .buyerFullName(buyerFullName)
+                .buyerEmail(buyerEmail)
+                .shippingPence(shippingPence)
+                .deliveryZoneId(zone.getId())
+                .totalPence(totalPence)
+                .delivery(toJson(req.delivery()))
+                .status(OrderStatus.PENDING)
+                .build();
+
+        items.forEach(item -> item.setOrder(order));
+        order.getItems().addAll(items);
+        Order saved = orderRepository.save(order);
+
+        // Only send buyer acknowledgement — creator notification fires after payment is confirmed
+//        emailService.sendApplicationReceived(
+//                saved.getBuyerEmail(), saved.getBuyerFullName(), saved.getDisplayId());
+
+        return toDto(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public OrderDto trackGuestOrder(String displayId, String email) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        if (!order.getBuyerEmail().equalsIgnoreCase(email.trim()))
+            throw ApiException.notFound("Order not found");
+        return toDto(order);
+    }
+
+    @Transactional
+    public void linkGuestOrders(String email, User user) {
+        List<Order> guestOrders = orderRepository
+                .findByBuyerEmailIgnoreCaseAndBuyerIsNull(email);
+        if (guestOrders.isEmpty()) return;
+        guestOrders.forEach(o -> o.setBuyer(user));
+        orderRepository.saveAll(guestOrders);
+        log.info("Linked {} guest orders to new user {}", guestOrders.size(), user.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getBuyerOrders(UUID buyerId) {
+        return orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId)
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getCreatorOrders(String creatorId) {
+        return orderRepository.findByCreatorId(creatorId)
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> getAllOrders() {
+        return orderRepository.findAllOrderByCreatedAtDesc()
+                .stream().map(this::toDto).toList();
+    }
+
+    @Transactional
+    public OrderDto updateStatus(String creatorId, String displayId,
+                                 UpdateStatusRequest req) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        boolean owns = order.getItems().stream()
+                .anyMatch(i -> i.getCreator() != null
+                        && i.getCreator().getId().equals(creatorId));
+        if (!owns) throw ApiException.forbidden("You do not have access to this order");
+        OrderStatus next = parseStatus(req.status());
+        validateTransition(order.getStatus(), next);
+        order.setStatus(next);
+        return toDto(orderRepository.save(order));
+    }
+
+    @Transactional
+    public OrderDto adminRefund(String displayId) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        order.setStatus(OrderStatus.CANCELLED);
+        log.info("Order {} cancelled by admin", displayId);
+        return toDto(orderRepository.save(order));
+    }
+
+    private void validateTransition(OrderStatus current, OrderStatus next) {
+        boolean valid = switch (current) {
+            case PAID      -> next == OrderStatus.PREPARING;
+            case PREPARING -> next == OrderStatus.SHIPPED;
+            case SHIPPED   -> next == OrderStatus.DELIVERED;
+            default        -> false;
+        };
+        if (!valid) throw ApiException.badRequest(
+                "Invalid status transition from " + current + " to " + next);
+    }
+
+    private OrderStatus parseStatus(String status) {
+        try { return OrderStatus.valueOf(status.toUpperCase()); }
+        catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Invalid status: " + status); }
+    }
+
+    private String generateDisplayId() {
+        String month = DateTimeFormatter.ofPattern("yyyyMM")
+                .format(LocalDateTime.now());
+        int rand = ThreadLocalRandom.current().nextInt(1000, 9999);
+        return "UKN-" + month + "-" + rand;
+    }
+
+    private String toJson(Object obj) {
+        try { return objectMapper.writeValueAsString(obj); }
+        catch (Exception e) { return "{}"; }
+    }
+
+    private DeliveryDto parseDelivery(String json) {
+        try { return objectMapper.readValue(json, DeliveryDto.class); }
+        catch (Exception e) { return null; }
+    }
+
+    OrderDto toDto(Order o) {
+        int productsTotalPence = o.getItems().stream()
+                .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
+        List<OrderItemDto> items = o.getItems().stream().map(i ->
+                new OrderItemDto(
+                        i.getProduct() != null ? i.getProduct().getId() : null,
+                        i.getProductName(), i.getQuantity(), i.getPricePence(),
+                        i.getImage(),
+                        new OrderItemCreatorDto(
+                                i.getCreator() != null ? i.getCreator().getId() : null,
+                                i.getCreatorFullName(), i.getCreatorRegion()))
+        ).toList();
+        return new OrderDto(
+                o.getDisplayId(), o.getCreatedAt(), o.getStatus().name(),
+                productsTotalPence, o.getShippingPence(), o.getTotalPence(),
+                new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
+                items, parseDelivery(o.getDelivery()));
+    }
+
+
+    @Transactional
+    public OrderDto adminUpdateStatus(String displayId, UpdateStatusRequest req) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        OrderStatus next = parseStatus(req.status());
+        validateAdminTransition(order.getStatus(), next);
+        order.setStatus(next);
+        Order saved = orderRepository.save(order);
+        emailService.sendOrderStatusUpdate(
+                saved.getBuyerEmail(), saved.getBuyerFullName(),
+                saved.getDisplayId(), next.name());
+        return toDto(saved);
+    }
+
+    @Transactional
+    public List<OrderDto> adminBulkUpdateStatus(BulkStatusUpdateRequest req) {
+        OrderStatus next = parseStatus(req.status());
+        List<OrderDto> results = new ArrayList<>();
+        for (String displayId : req.displayIds()) {
+            Order order = orderRepository.findByDisplayId(displayId)
+                    .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
+            validateAdminTransition(order.getStatus(), next);
+            order.setStatus(next);
+            Order saved = orderRepository.save(order);
+            emailService.sendOrderStatusUpdate(
+                    saved.getBuyerEmail(), saved.getBuyerFullName(),
+                    saved.getDisplayId(), next.name());
+            results.add(toDto(saved));
+        }
+        return results;
+    }
+
+    private void validateAdminTransition(OrderStatus current, OrderStatus next) {
+        if (current == OrderStatus.CANCELLED)
+            throw ApiException.badRequest("Cannot update a cancelled order");
+        if (next == OrderStatus.PENDING)
+            throw ApiException.badRequest("Cannot revert to PENDING");
+        if (current == OrderStatus.DELIVERED && next != OrderStatus.CANCELLED)
+            throw ApiException.badRequest("Order already delivered");
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto> trackByEmail(String email) {
+        return orderRepository.findByBuyerEmailIgnoreCaseOrderByCreatedAtDesc(email.trim())
+                .stream().map(this::toDto).toList();
+    }
+}
+package com.mdau.ukena.order;
+
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.common.ApiResponse;
+import com.mdau.ukena.order.dto.*;
+import com.mdau.ukena.security.CurrentUser;
+import com.mdau.ukena.user.User;
+import com.mdau.ukena.user.UserRepository;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequiredArgsConstructor
+public class OrderController {
+
+    private final OrderService orderService;
+    private final UserRepository userRepository;
+
+    @PostMapping("/orders")
+    public ResponseEntity<ApiResponse<OrderDto>> place(
+            @Valid @RequestBody CreateOrderRequest req,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+
+        User buyer = null;
+
+        if (currentUser != null) {
+            buyer = userRepository.findById(currentUser.id())
+                    .orElseThrow(() -> ApiException.notFound("User not found"));
+        } else if (req.guestEmail() != null && req.guestFullName() != null) {
+            // guest — buyer stays null, email/name carried in request
+        } else {
+            throw ApiException.badRequest("Provide guestEmail and guestFullName for guest checkout, or log in");
+        }
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(
+                        orderService.place(buyer, req),
+                        "Order placed successfully"));
+    }
+
+    @GetMapping("/orders/track")
+    public ResponseEntity<ApiResponse<OrderDto>> track(
+            @RequestParam String displayId,
+            @RequestParam String email) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.trackGuestOrder(displayId, email)));
+    }
+
+    @GetMapping("/orders/me")
+    @PreAuthorize("hasRole('BUYER')")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> buyerOrders(
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.getBuyerOrders(currentUser.id())));
+    }
+
+    @GetMapping("/creators/me/orders")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> creatorOrders(
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.getCreatorOrders(currentUser.creatorId())));
+    }
+
+    @PatchMapping("/creators/me/orders/{displayId}/status")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<OrderDto>> updateStatus(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String displayId,
+            @Valid @RequestBody UpdateStatusRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.updateStatus(
+                        currentUser.creatorId(), displayId, req)));
+    }
+
+    @GetMapping("/admin/orders")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> adminOrders() {
+        return ResponseEntity.ok(ApiResponse.ok(orderService.getAllOrders()));
+    }
+
+    @PatchMapping("/admin/orders/{displayId}/refund")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<OrderDto>> adminRefund(
+            @PathVariable String displayId) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.adminRefund(displayId)));
+    }
+
+    @PatchMapping("/admin/orders/{displayId}/status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<OrderDto>> adminUpdateStatus(
+            @PathVariable String displayId,
+            @Valid @RequestBody UpdateStatusRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.adminUpdateStatus(displayId, req)));
+    }
+
+    @PatchMapping("/admin/orders/bulk-status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> adminBulkUpdateStatus(
+            @Valid @RequestBody BulkStatusUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.adminBulkUpdateStatus(req)));
+    }
+
+    @GetMapping("/orders/track-by-email")
+    public ResponseEntity<ApiResponse<List<OrderDto>>> trackByEmail(
+            @RequestParam String email) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.trackByEmail(email)));
+    }
+}
+package com.mdau.ukena.order.dto;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
+import java.util.UUID;
+
+public record CreateOrderRequest(
+        @NotEmpty List<@Valid OrderItemRequest> items,
+        @NotNull @Valid DeliveryDto delivery,
+        @NotNull UUID deliveryZoneId,
+        UUID buyerId,
+        String guestEmail,
+        String guestFullName
+) {}
+package com.mdau.ukena.order.dto;
+
+import java.time.Instant;
+import java.util.List;
+
+public record OrderDto(
+        String displayId,
+        Instant createdAt,
+        String status,
+        int productsTotalPence,
+        int shippingPence,
+        int totalPence,
+        OrderBuyerDto buyer,
+        List<OrderItemDto> items,
+        DeliveryDto delivery
+) {}
+package com.mdau.ukena.order.dto;
+
+import jakarta.validation.constraints.*;
+
+public record OrderItemRequest(
+        @NotBlank String productId,
+        @Min(1) @Max(99) int quantity
+) {}
+package com.mdau.ukena.payment;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "earnings_ledger", indexes = {
+        @Index(name = "idx_ledger_creator_status", columnList = "artisan_profile_id,status"),
+        @Index(name = "idx_ledger_order_id",       columnList = "order_id")
+})
+@Getter @Setter
+@NoArgsConstructor @AllArgsConstructor
+@Builder
+public class EarningsLedger {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "creator_id", nullable = false, length = 80)
+    private String creatorId;
+
+    @Column(name = "artisan_profile_id", length = 80)
+    private String artisanProfileId;
+
+    @Column(name = "order_id")
+    private UUID orderId;
+
+    @Column(name = "order_item_id", nullable = false)
+    private UUID orderItemId;
+
+    @Column(name = "gross_pence", nullable = false)
+    private int grossPence;
+
+    // amount_pence = net_pence — kept as a separate column to match the DB schema
+    @Column(name = "amount_pence", nullable = false)
+    private int amountPence;
+
+    @Column(name = "commission_rate", nullable = false, precision = 5, scale = 4)
+    private BigDecimal commissionRate;
+
+    @Column(name = "net_pence", nullable = false)
+    private int netPence;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 25)
+    @Builder.Default
+    private LedgerStatus status = LedgerStatus.PENDING;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+}
+package com.mdau.ukena.payment;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.Order;
+import com.mdau.ukena.order.OrderItem;
+import com.mdau.ukena.order.OrderRepository;
+import com.mdau.ukena.order.OrderStatus;
+import com.mdau.ukena.security.CurrentUser;
+import com.mdau.ukena.user.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PaymentService {
+
+    private final PaymentGateway           paymentGateway;
+    private final OrderRepository          orderRepository;
+    private final EarningsLedgerRepository ledgerRepository;
+    private final PayoutUpdateService      payoutUpdateService;
+    private final UserRepository           userRepository;
+    private final EmailService             emailService;
+    private final ObjectMapper             objectMapper;
+
+    @Value("${ukena.payment.commission-rate:0.40}")
+    private BigDecimal commissionRate;
+
+    @Value("${ukena.payment.provider:stripe}")
+    private String provider;
+
+    @Transactional
+    public PaymentInitResponse initiate(String displayId, CurrentUser currentUser) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
+
+        boolean authorized = order.getBuyer() != null
+                ? order.getBuyer().getId().equals(currentUser.id())
+                : order.getBuyerEmail().equalsIgnoreCase(currentUser.email());
+
+        if (!authorized)
+            throw ApiException.forbidden("This order does not belong to you");
+        if (order.getStatus() == OrderStatus.PAID)
+            throw ApiException.badRequest("Order is already paid");
+        if (order.getStatus() != OrderStatus.PENDING)
+            throw ApiException.badRequest("Order is not in PENDING state");
+
+        String description = "Complete your Ukena order " + displayId;
+
+        PaymentInitResult result = paymentGateway.initiatePayment(new PaymentInitRequest(
+                order.getId(), displayId, order.getTotalPence(),
+                "GBP", order.getBuyerEmail(), order.getBuyerFullName(), description));
+
+        order.setGatewayRef(result.gatewayRef());
+        orderRepository.save(order);
+        return new PaymentInitResponse(result.paymentLink(), result.gatewayRef());
+    }
+
+    @Transactional
+    public void handleWebhook(String payload, String signature) {
+        if (payload == null || payload.isBlank()) return;
+        if ("paystack".equalsIgnoreCase(provider)) {
+            handlePaystackWebhook(payload, signature);
+        } else {
+            handleStripeWebhook(payload, signature);
+        }
+    }
+
+    private void handleStripeWebhook(String payload, String signature) {
+        if (!paymentGateway.verifyWebhookSignature(payload, signature)) {
+            log.warn("Stripe webhook signature invalid - ignoring");
+            return;
+        }
+        try {
+            JsonNode node    = objectMapper.readTree(payload);
+            String   event   = node.path("type").asText();
+            log.info("Stripe webhook event: {}", event);
+
+            if (!"checkout.session.completed".equalsIgnoreCase(event)) return;
+
+            String sessionId = node.path("data").path("object").path("id").asText();
+            String displayId = node.path("data").path("object").path("client_reference_id").asText();
+            String status    = node.path("data").path("object").path("payment_status").asText();
+
+            log.info("Stripe webhook: sessionId={} displayId={} status={}", sessionId, displayId, status);
+
+            if (!"paid".equalsIgnoreCase(status)) return;
+
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
+                if (order.getStatus() == OrderStatus.PAID) {
+                    log.info("Order {} already PAID, skipping", displayId);
+                    return;
+                }
+                markOrderPaid(order, sessionId);
+            }, () -> log.warn("Stripe webhook: order not found for displayId={}", displayId));
+
+        } catch (Exception e) {
+            log.error("Stripe webhook parse error", e);
+        }
+    }
+
+    private void handlePaystackWebhook(String payload, String signature) {
+        if (!paymentGateway.verifyWebhookSignature(payload, signature)) {
+            log.warn("Paystack webhook signature invalid - ignoring");
+            return;
+        }
+        try {
+            JsonNode node  = objectMapper.readTree(payload);
+            String   event = node.path("event").asText();
+            log.info("Paystack webhook event: {}", event);
+
+            if (!"charge.success".equalsIgnoreCase(event)) return;
+
+            String reference = node.path("data").path("reference").asText();
+            String status    = node.path("data").path("status").asText();
+
+            if (!"success".equalsIgnoreCase(status)) return;
+
+            String displayId = reference.contains("-")
+                    ? reference.substring(0, reference.lastIndexOf('-'))
+                    : reference;
+
+            log.info("Paystack webhook: ref={} displayId={}", reference, displayId);
+
+            orderRepository.findByDisplayId(displayId).ifPresentOrElse(order -> {
+                if (order.getStatus() == OrderStatus.PAID) {
+                    log.info("Order {} already PAID, skipping", displayId);
+                    return;
+                }
+                if (paymentGateway.verifyPayment(reference)) {
+                    markOrderPaid(order, reference);
+                } else {
+                    log.warn("Paystack verify failed for reference={}", reference);
+                }
+            }, () -> log.warn("Paystack webhook: order not found for displayId={}", displayId));
+
+        } catch (Exception e) {
+            log.error("Paystack webhook parse error", e);
+        }
+    }
+
+    private void markOrderPaid(Order order, String gatewayRef) {
+        // 1. Mark order PAID
+        order.setStatus(OrderStatus.PAID);
+        order.setGatewayRef(gatewayRef);
+        order.setPaidAt(Instant.now());
+        orderRepository.save(order);
+
+        // 2. Credit earnings ledger
+        creditLedger(order);
+
+        // 3. Update payout balance — isolated transaction, failure won't roll back steps 1 & 2
+        try {
+            payoutUpdateService.updatePayoutRecord(order);
+        } catch (Exception e) {
+            log.error("Payout balance update failed for order={} — needs manual reconciliation: {}",
+                    order.getDisplayId(), e.getMessage());
+        }
+
+        // 4. Notify buyer
+        emailService.sendOrderConfirmation(
+                order.getBuyerEmail(), order.getBuyerFullName(),
+                order.getDisplayId(), order.getTotalPence(),
+                order.getItems().stream()
+                        .map(OrderItem::getCreatorFullName).distinct()
+                        .collect(Collectors.joining(", ")));
+
+        // 5. Notify creators
+        sendCreatorOrderNotifications(order);
+
+        log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);
+    }
+
+    private void creditLedger(Order order) {
+        for (OrderItem item : order.getItems()) {
+            if (item.getCreator() == null) continue;
+            int gross = item.getPricePence() * item.getQuantity();
+            int net = new BigDecimal(gross)
+                    .multiply(BigDecimal.ONE.subtract(commissionRate))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .intValue();
+            ledgerRepository.save(EarningsLedger.builder()
+                    .creatorId(item.getCreator().getId())
+                    .artisanProfileId(item.getCreator().getId())
+                    .orderId(order.getId())
+                    .orderItemId(item.getId())
+                    .grossPence(gross)
+                    .amountPence(net)   // amount_pence = net creator earnings
+                    .commissionRate(commissionRate)
+                    .netPence(net)
+                    .status(LedgerStatus.PENDING)
+                    .build());
+        }
+    }
+
+    private void sendCreatorOrderNotifications(Order order) {
+        order.getItems().stream()
+                .filter(i -> i.getCreator() != null)
+                .collect(Collectors.groupingBy(i -> i.getCreator().getId()))
+                .forEach((creatorId, items) -> {
+                    OrderItem first = items.get(0);
+                    userRepository.findByCreatorId(creatorId).ifPresentOrElse(
+                            user -> emailService.sendNewOrderNotification(
+                                    user.getEmail(), user.getFullName(),
+                                    order.getDisplayId(), first.getProductName(),
+                                    items.stream().mapToInt(OrderItem::getQuantity).sum()),
+                            () -> log.warn("No user found for creatorId={}", creatorId));
+                });
+    }
+
+    @Transactional
+    public PayoutResult gatewayPayout(String creatorId, String accountNumber, String accountName) {
+        int netPence = ledgerRepository
+                .sumNetPenceByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
+        if (netPence <= 0)
+            throw ApiException.badRequest("No pending earnings for creator " + creatorId);
+        PayoutResult result = paymentGateway.initiateTransfer(new PayoutRequest(
+                creatorId, netPence, accountNumber, accountName,
+                "Ukena payout to " + accountName));
+        if (result.success()) {
+            List<EarningsLedger> entries = ledgerRepository
+                    .findByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
+            entries.forEach(e -> e.setStatus(LedgerStatus.PAID));
+            ledgerRepository.saveAll(entries);
+        }
+        return result;
+    }
+}
+package com.mdau.ukena.admin;
+
+import com.mdau.ukena.admin.dto.*;
+import com.mdau.ukena.common.ApiResponse;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/admin")
+@PreAuthorize("hasRole('ADMIN')")
+@RequiredArgsConstructor
+public class AdminController {
+
+    private final AdminService adminService;
+
+    // -- Staff --------------------------------------------------------------
+
+    @PostMapping("/staff")
+    public ResponseEntity<ApiResponse<StaffDto>> createStaff(
+            @Valid @RequestBody CreateStaffRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(adminService.createStaff(req), "Staff account created"));
+    }
+
+    @GetMapping("/staff")
+    public ResponseEntity<ApiResponse<List<StaffDto>>> listStaff() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listStaff()));
+    }
+
+    // -- Buyers -------------------------------------------------------------
+
+    @GetMapping("/buyers")
+    public ResponseEntity<ApiResponse<List<AdminBuyerRow>>> listBuyers() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listBuyers()));
+    }
+
+    @PatchMapping("/buyers/{id}/suspend")
+    public ResponseEntity<Void> suspendBuyer(@PathVariable UUID id) {
+        adminService.suspendBuyer(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/buyers/{id}/unsuspend")
+    public ResponseEntity<Void> unsuspendBuyer(@PathVariable UUID id) {
+        adminService.unsuspendBuyer(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // -- Creators -----------------------------------------------------------
+
+    @GetMapping("/creators")
+    public ResponseEntity<ApiResponse<List<AdminCreatorRow>>> listCreators(
+            @RequestParam(required = false) String status) {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listCreators(status)));
+    }
+
+    @PatchMapping("/creators/{id}/suspend")
+    public ResponseEntity<Void> suspendCreator(@PathVariable String id) {
+        adminService.suspendCreator(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/creators/{id}/unsuspend")
+    public ResponseEntity<Void> unsuspendCreator(@PathVariable String id) {
+        adminService.unsuspendCreator(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // -- Payouts ------------------------------------------------------------
+
+    @GetMapping("/payouts")
+    public ResponseEntity<ApiResponse<List<CreatorPayoutDto>>> listPayouts() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listPayouts()));
+    }
+
+    @PostMapping("/payouts/{creatorId}/pay")
+    public ResponseEntity<ApiResponse<CreatorPayoutDto>> processPayout(
+            @PathVariable String creatorId,
+            @Valid @RequestBody PayoutRequestDto req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminService.processPayout(creatorId, req.accountNumber(), req.accountName()),
+                "Payout processed"));
+    }
+
+    // -- Reviews ------------------------------------------------------------
+
+    @GetMapping("/reviews")
+    public ResponseEntity<ApiResponse<List<ProductReviewDto>>> listReviews() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.listReviews()));
+    }
+
+    @PatchMapping("/reviews/{id}/status")
+    public ResponseEntity<ApiResponse<ProductReviewDto>> updateReviewStatus(
+            @PathVariable String id,
+            @Valid @RequestBody ReviewStatusUpdate req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminService.updateReviewStatus(id, req)));
+    }
+
+    // -- Featured slots -----------------------------------------------------
+
+    @GetMapping("/featured")
+    public ResponseEntity<ApiResponse<List<FeaturedSlotDto>>> getFeatured() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.getFeaturedSlots()));
+    }
+
+    @PutMapping("/featured")
+    public ResponseEntity<ApiResponse<List<FeaturedSlotDto>>> updateFeatured(
+            @RequestBody List<FeaturedSlotDto> slots) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminService.updateFeaturedSlots(slots)));
+    }
+}
+package com.mdau.ukena.admin;
+
+import com.mdau.ukena.admin.dto.*;
+import com.mdau.ukena.cloudinary.CloudinaryService;
+import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.creator.Creator;
+import com.mdau.ukena.creator.CreatorRepository;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.payment.PaymentService;
+import com.mdau.ukena.payment.PayoutResult;
+import com.mdau.ukena.product.ProductRepository;
+import com.mdau.ukena.user.User;
+import com.mdau.ukena.user.UserRepository;
+import com.mdau.ukena.user.UserRole;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AdminService {
+
+    private final UserRepository userRepository;
+    private final CreatorRepository creatorRepository;
+    private final ProductRepository productRepository;
+    private final PayoutRepository payoutRepository;
+    private final ReviewRepository reviewRepository;
+    private final FeaturedSlotRepository featuredSlotRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    private final PaymentService paymentService;
+    private final CloudinaryService cloudinaryService;
+
+    // -- Staff management ---------------------------------------------------
+
+    @Transactional
+    public StaffDto createStaff(CreateStaffRequest req) {
+        if (userRepository.existsByEmail(req.email())) {
+            throw ApiException.conflict("An account with this email already exists");
+        }
+        User staff = User.builder()
+                .email(req.email().toLowerCase().trim())
+                .passwordHash(passwordEncoder.encode(req.password()))
+                .fullName(req.fullName().trim())
+                .role(UserRole.ROLE_SUPPORT)
+                .build();
+        userRepository.save(staff);
+        log.info("Support staff account created: {}", req.email());
+        return new StaffDto(staff.getId().toString(), staff.getEmail(),
+                staff.getFullName(), staff.getRole().name());
+    }
+
+    @Transactional(readOnly = true)
+    public List<StaffDto> listStaff() {
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == UserRole.ROLE_SUPPORT
+                          || u.getRole() == UserRole.ROLE_ADMIN)
+                .map(u -> new StaffDto(u.getId().toString(), u.getEmail(),
+                        u.getFullName(), u.getRole().name()))
+                .toList();
+    }
+
+    // -- Buyers -------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<AdminBuyerRow> listBuyers() {
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == UserRole.ROLE_BUYER)
+                .map(u -> new AdminBuyerRow(u.getId().toString(),
+                        u.getFullName(), u.getEmail(), u.isSuspended()))
+                .toList();
+    }
+
+    @Transactional
+    public void suspendBuyer(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        user.setSuspended(true);
+        userRepository.save(user);
+        log.info("Buyer {} suspended", userId);
+    }
+
+    @Transactional
+    public void unsuspendBuyer(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        user.setSuspended(false);
+        userRepository.save(user);
+        log.info("Buyer {} unsuspended", userId);
+    }
+
+    // -- Creators -----------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<AdminCreatorRow> listCreators(String status) {
+        String param = (status == null || status.isBlank()) ? null : status.toUpperCase();
+        return creatorRepository.findAllForAdmin(param)
+                .stream().map(this::toAdminCreatorRow).toList();
+    }
+
+    @Transactional
+    public void suspendCreator(String creatorId) {
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+        creator.setDeletedAt(Instant.now());
+        creatorRepository.save(creator);
+        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
+            user.setSuspended(true);
+            userRepository.save(user);
+            log.info("Creator user account suspended: {}", user.getEmail());
+        });
+        int suspended = productRepository.suspendAllByCreatorId(creatorId);
+        log.info("Creator {} suspended - {} products suspended", creatorId, suspended);
+    }
+
+    @Transactional
+    public void unsuspendCreator(String creatorId) {
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+        creator.setDeletedAt(null);
+        creatorRepository.save(creator);
+        userRepository.findByCreatorId(creatorId).ifPresent(user -> {
+            user.setSuspended(false);
+            userRepository.save(user);
+            log.info("Creator user account unsuspended: {}", user.getEmail());
+        });
+        int restored = productRepository.restoreAllByCreatorId(creatorId);
+        log.info("Creator {} unsuspended - {} products restored", creatorId, restored);
+    }
+
+    // -- Payouts ------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<CreatorPayoutDto> listPayouts() {
+        return payoutRepository.findAllByOrderByCreatorIdAsc()
+                .stream().map(this::toPayoutDto).toList();
+    }
+
+    @Transactional
+    public CreatorPayoutDto processPayout(String creatorId, String accountNumber,
+                                          String accountName) {
+        Creator creator = creatorRepository.findActiveById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+        PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
+                .orElseGet(() -> PayoutRecord.builder()
+                        .creatorId(creatorId)
+                        .creator(creator)
+                        .build());
+        int amount = payout.getPendingPence();
+        if (amount <= 0)
+            throw ApiException.badRequest("No pending earnings to pay out");
+        PayoutResult result = paymentService.gatewayPayout(
+                creatorId, accountNumber, accountName);
+        log.info("Payout for creator {}: success={} ref={} msg={}",
+                creatorId, result.success(), result.gatewayRef(), result.message());
+        if (result.success()) {
+            payout.setPaidThisMonthPence(payout.getPaidThisMonthPence() + amount);
+            payout.setTotalLifetimePence(payout.getTotalLifetimePence() + amount);
+            payout.setPendingPence(0);
+            payout.setLastPaidAt(Instant.now());
+            payoutRepository.save(payout);
+            userRepository.findByCreatorId(creatorId).ifPresent(user ->
+                    emailService.sendPayoutConfirmation(
+                            user.getEmail(), user.getFullName(), amount, "GBP"));
+        }
+        return toPayoutDto(payout);
+    }
+
+    // -- Reviews ------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<ProductReviewDto> listReviews() {
+        return reviewRepository.findAllByOrderBySubmittedAtDesc()
+                .stream().map(this::toReviewDto).toList();
+    }
+
+    @Transactional
+    public ProductReviewDto updateReviewStatus(String reviewId, ReviewStatusUpdate req) {
+        ReviewRecord review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> ApiException.notFound("Review not found"));
+        try {
+            review.setStatus(ReviewStatus.valueOf(req.status().toUpperCase()));
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Invalid review status: " + req.status());
+        }
+        return toReviewDto(reviewRepository.save(review));
+    }
+
+    // -- Featured slots -----------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<FeaturedSlotDto> getFeaturedSlots() {
+        return featuredSlotRepository.findAllByOrderByPositionAsc()
+                .stream().map(this::toSlotDto).toList();
+    }
+
+    @Transactional
+    public List<FeaturedSlotDto> updateFeaturedSlots(List<FeaturedSlotDto> slots) {
+        slots.forEach(dto -> {
+            FeaturedSlot slot = featuredSlotRepository.findById(dto.position())
+                    .orElseGet(() -> new FeaturedSlot(dto.position(), null, null));
+            Creator creator = dto.creatorId() != null
+                    ? creatorRepository.findById(dto.creatorId()).orElse(null) : null;
+            slot.setCreator(creator);
+            featuredSlotRepository.save(slot);
+        });
+        return getFeaturedSlots();
+    }
+
+    // -- Mappers ------------------------------------------------------------
+
+    private AdminCreatorRow toAdminCreatorRow(Creator c) {
+        return new AdminCreatorRow(
+                c.getId(), c.getFirstName(), c.getFullName(),
+                c.getCraft(), c.getRegion(), c.getImage(),
+                c.getDeletedAt() != null,
+                c.getCreatedAt());
+    }
+
+    private CreatorPayoutDto toPayoutDto(PayoutRecord p) {
+        Creator c = p.getCreator();
+        return new CreatorPayoutDto(c.getId(), c.getFullName(), c.getRegion(),
+                c.getCraft(), p.getPendingPence(), p.getPaidThisMonthPence(),
+                p.getTotalLifetimePence(), p.getLastPaidAt());
+    }
+
+    private ProductReviewDto toReviewDto(ReviewRecord r) {
+        return new ProductReviewDto(r.getId(),
+                r.getProduct() != null ? r.getProduct().getId() : null,
+                r.getProduct() != null ? r.getProduct().getName() : null,
+                r.getBuyerName(), r.getRating(), r.getBody(),
+                r.getSubmittedAt(), r.getStatus().name());
+    }
+
+    private FeaturedSlotDto toSlotDto(FeaturedSlot s) {
+        return new FeaturedSlotDto(s.getPosition(),
+                s.getCreator() != null ? s.getCreator().getId() : null,
+                s.getProduct() != null ? s.getProduct().getId() : null);
+    }
+}
+package com.mdau.ukena.config;
+
+import com.mdau.ukena.security.AccessDeniedHandlerImpl;
+import com.mdau.ukena.security.AuthEntryPoint;
+import com.mdau.ukena.security.JwtAuthFilter;
+import com.mdau.ukena.user.UserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Arrays;
+import java.util.List;
+
+@Configuration
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    private final JwtAuthFilter jwtAuthFilter;
+    private final AuthEntryPoint authEntryPoint;
+    private final AccessDeniedHandlerImpl accessDeniedHandler;
+    private final UserService userService;
+
+    @Value("${ukena.cors.allowed-origins}")
+    private String allowedOrigins;
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userService);
+        provider.setPasswordEncoder(passwordEncoder());
+        return provider;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(
+            AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .authenticationProvider(authenticationProvider())
+            .cors(c -> c.configurationSource(corsConfigurationSource()))
+            .csrf(AbstractHttpConfigurer::disable)
+            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .exceptionHandling(e -> e
+                    .authenticationEntryPoint(authEntryPoint)
+                    .accessDeniedHandler(accessDeniedHandler))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers("/auth/login", "/auth/register",
+                        "/auth/forgot-password", "/auth/reset-password").permitAll()
+                .requestMatchers(HttpMethod.POST, "/applications").permitAll()
+                .requestMatchers(HttpMethod.POST, "/cloudinary/sign").permitAll()
+                .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/payments/webhook").permitAll()
+                .requestMatchers(HttpMethod.POST, "/payments/initiate").permitAll()
+                .requestMatchers(HttpMethod.POST, "/orders").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/delivery-zones").permitAll()
+                .requestMatchers(HttpMethod.GET,
+                        "/creators", "/creators/*",
+                        "/products", "/products/*",
+                        "/reviews/product/*",
+                        "/search").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/orders/track-by-email").permitAll()
+
+                .requestMatchers(
+                        "/actuator/health",
+                        "/v3/api-docs/**",
+                        "/swagger-ui.html",
+                        "/swagger-ui/**").permitAll()
+                .anyRequest().authenticated())
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
+        config.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+        config.setAllowedHeaders(List.of("Content-Type","Authorization","Accept","Origin"));
+        config.setExposedHeaders(List.of("Authorization"));
+        config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(12);
+    }
+
+
+}
+spring:
+  application:
+    name: ukena-backend
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ukena}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+      pool-name: UkenaHikariPool
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        format_sql: false
+        use_sql_comments: false
+        generate_statistics: false
+        cache:
+          use_second_level_cache: false
+
+  mail:
+    host: ${MAIL_HOST:smtp-relay.brevo.com}
+    port: ${MAIL_PORT:587}
+    username: ${BREVO_USERNAME:}
+    password: ${BREVO_SMTP_KEY:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+    test-connection: false
+
+  freemarker:
+    template-loader-path: classpath:/templates/email/
+    default-encoding: UTF-8
+    cache: false
+    prefer-file-system-access: false
+
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 24MB
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${PORT:8080}
+  servlet:
+    context-path: /api
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/plain
+    min-response-size: 1024
+  http2:
+    enabled: true
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-exception: false
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+ukena:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-hours: 24
+
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000,https://ukena.co.uk}
+
+  media:
+    provider: ${MEDIA_PROVIDER:cloudinary}
+
+  cloudinary:
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+    api-key: ${CLOUDINARY_API_KEY:}
+    api-secret: ${CLOUDINARY_API_SECRET:}
+
+  admin:
+    email: ${UKENA_ADMIN_EMAIL:admin@ukena.co.uk}
+    password: ${UKENA_ADMIN_PASSWORD:}
+
+  email:
+    from-address: ${EMAIL_FROM:mdaucodes@gmail.com}
+    from-name: ${EMAIL_FROM_NAME:Ukena}
+    brevo-api-key: ${BREVO_API_KEY}
+    brevo-api-url: https://api.brevo.com/v3/smtp/email
+    use-brevo-api: ${USE_BREVO_API:true}
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+  payment:
+    provider: ${PAYMENT_PROVIDER:stripe}
+    commission-rate: 0.40
+
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+    callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    cancel-url: ${FRONTEND_URL:http://localhost:5173}/checkout
+
+  paystack:
+    secret-key: ${PAYSTACK_SECRET_KEY:}
+    subaccount-code: ${PAYSTACK_SUBACCOUNT_CODE:}
+    callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    gbp-to-kes-rate: ${GBP_TO_KES_RATE:165.0}
+
+  pesapal:
+    consumer-key: ${PESAPAL_CONSUMER_KEY:}
+    consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
+    base-url: ${PESAPAL_BASE_URL:https://cybqa.pesapal.com/pesapalv3}
+    ipn-url: ${BACKEND_URL:http://localhost:8080}/api/payments/webhook
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  flutterwave:
+    secret-key: ${FLUTTERWAVE_SECRET_KEY:}
+    public-key: ${FLUTTERWAVE_PUBLIC_KEY:}
+    webhook-secret: ${FLUTTERWAVE_WEBHOOK_SECRET:}
+    base-url: https://api.flutterwave.com/v3
+    redirect-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
+    currency: GBP
+
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    from-number: ${TWILIO_FROM_NUMBER:}
+    enabled: ${TWILIO_ENABLED:false}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${SWAGGER_ENABLED:true}
+  api-docs:
+    path: /v3/api-docs
+    enabled: ${SWAGGER_ENABLED:true}
+
+logging:
+  level:
+    root: WARN
+    com.mdau.ukena: INFO
+    org.springframework.web: WARN
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+resilience4j:
+  ratelimiter:
+    instances:
+      public-api:
+        limit-for-period: 60
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      auth-api:
+        limit-for-period: 10
+        limit-refresh-period: 1m
+        timeout-duration: 0s
+      upload-api:
+        limit-for-period: 20
+        limit-refresh-period: 1m
+        timeout-duration: 0s

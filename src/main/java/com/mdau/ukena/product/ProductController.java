@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 
 @RestController
@@ -19,8 +20,9 @@ public class ProductController {
 
     private final ProductService productService;
 
-    // ── Public ────────────────────────────────────────────────────
+    // ── Public ───────────────────────────────────────────────
 
+    /** All active products — creator + Uken catalogue mixed. */
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<Page<ProductDto>>> browse(
             @RequestParam(required = false) String creatorId,
@@ -33,12 +35,24 @@ public class ProductController {
                 productService.browse(creatorId, minPrice, maxPrice, sort, page, size)));
     }
 
+    /** Uken-owned catalogue only — separate section. */
+    @GetMapping("/catalogue")
+    public ResponseEntity<ApiResponse<Page<ProductDto>>> catalogue(
+            @RequestParam(required = false) Integer minPrice,
+            @RequestParam(required = false) Integer maxPrice,
+            @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "12") int size) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.browseUkenaCatalogue(minPrice, maxPrice, sort, page, size)));
+    }
+
     @GetMapping("/products/{id}")
     public ResponseEntity<ApiResponse<ProductDto>> getOne(@PathVariable String id) {
         return ResponseEntity.ok(ApiResponse.ok(productService.getById(id)));
     }
 
-    // ── Creator CRUD ──────────────────────────────────────────────
+    // ── Creator CRUD ─────────────────────────────────────────
 
     @GetMapping("/creators/me/products")
     @PreAuthorize("hasRole('CREATOR')")
@@ -88,8 +102,6 @@ public class ProductController {
         return ResponseEntity.noContent().build();
     }
 
-    // ── Image management ──────────────────────────────────────────
-
     @PostMapping("/creators/me/products/{id}/images")
     @PreAuthorize("hasRole('CREATOR')")
     public ResponseEntity<ApiResponse<ProductDto>> addImage(
@@ -110,7 +122,7 @@ public class ProductController {
         return ResponseEntity.noContent().build();
     }
 
-    // ── Admin ─────────────────────────────────────────────────────
+    // ── Admin: creator product moderation ────────────────────
 
     @PatchMapping("/admin/products/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
@@ -125,6 +137,60 @@ public class ProductController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> adminDelete(@PathVariable String id) {
         productService.adminDelete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Admin: Uken catalogue management ─────────────────────
+
+    @PostMapping("/admin/catalogue")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> catalogueCreate(
+            @Valid @RequestBody AdminProductCreateRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(
+                        productService.createForUkena(req), "Catalogue product created"));
+    }
+
+    @PutMapping("/admin/catalogue/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> catalogueUpdate(
+            @PathVariable String id,
+            @Valid @RequestBody AdminProductCreateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.updateForUkena(id, req)));
+    }
+
+    @PatchMapping("/admin/catalogue/{id}/status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> catalogueUpdateStatus(
+            @PathVariable String id,
+            @Valid @RequestBody ProductStatusUpdateRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.updateStatusByAdmin(id, req)));
+    }
+
+    @DeleteMapping("/admin/catalogue/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> catalogueDelete(@PathVariable String id) {
+        productService.adminDelete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/admin/catalogue/{id}/images")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> catalogueAddImage(
+            @PathVariable String id,
+            @Valid @RequestBody AddImageRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.addImageForUkena(id, req)));
+    }
+
+    @DeleteMapping("/admin/catalogue/{id}/images/{imageId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> catalogueDeleteImage(
+            @PathVariable String id,
+            @PathVariable Long imageId) {
+        productService.deleteImageForUkena(id, imageId);
         return ResponseEntity.noContent().build();
     }
 }

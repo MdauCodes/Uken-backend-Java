@@ -20,7 +20,7 @@ public class AdminController {
 
     private final AdminService adminService;
 
-    // -- Staff --------------------------------------------------------------
+    // ── Staff ────────────────────────────────────────────────
 
     @PostMapping("/staff")
     public ResponseEntity<ApiResponse<StaffDto>> createStaff(
@@ -34,7 +34,7 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(adminService.listStaff()));
     }
 
-    // -- Buyers -------------------------------------------------------------
+    // ── Buyers ───────────────────────────────────────────────
 
     @GetMapping("/buyers")
     public ResponseEntity<ApiResponse<List<AdminBuyerRow>>> listBuyers() {
@@ -53,7 +53,7 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
 
-    // -- Creators -----------------------------------------------------------
+    // ── Creators ─────────────────────────────────────────────
 
     @GetMapping("/creators")
     public ResponseEntity<ApiResponse<List<AdminCreatorRow>>> listCreators(
@@ -73,7 +73,7 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
 
-    // -- Payouts ------------------------------------------------------------
+    // ── Payouts ──────────────────────────────────────────────
 
     @GetMapping("/payouts")
     public ResponseEntity<ApiResponse<List<CreatorPayoutDto>>> listPayouts() {
@@ -85,11 +85,12 @@ public class AdminController {
             @PathVariable String creatorId,
             @Valid @RequestBody PayoutRequestDto req) {
         return ResponseEntity.ok(ApiResponse.ok(
-                adminService.processPayout(creatorId, req.accountNumber(), req.accountName()),
+                adminService.processPayout(
+                        creatorId, req.accountNumber(), req.accountName()),
                 "Payout processed"));
     }
 
-    // -- Reviews ------------------------------------------------------------
+    // ── Reviews ──────────────────────────────────────────────
 
     @GetMapping("/reviews")
     public ResponseEntity<ApiResponse<List<ProductReviewDto>>> listReviews() {
@@ -104,7 +105,7 @@ public class AdminController {
                 adminService.updateReviewStatus(id, req)));
     }
 
-    // -- Featured slots -----------------------------------------------------
+    // ── Featured slots ───────────────────────────────────────
 
     @GetMapping("/featured")
     public ResponseEntity<ApiResponse<List<FeaturedSlotDto>>> getFeatured() {
@@ -116,5 +117,12 @@ public class AdminController {
             @RequestBody List<FeaturedSlotDto> slots) {
         return ResponseEntity.ok(ApiResponse.ok(
                 adminService.updateFeaturedSlots(slots)));
+    }
+
+    // ── Revenue dashboard ────────────────────────────────────
+
+    @GetMapping("/revenue")
+    public ResponseEntity<ApiResponse<UkenaRevenueDto>> getRevenue() {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.getRevenue()));
     }
 }

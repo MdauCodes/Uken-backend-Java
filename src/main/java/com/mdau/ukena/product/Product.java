@@ -11,12 +11,13 @@ import java.util.List;
 
 @Entity
 @Table(name = "products", indexes = {
-        @Index(name = "idx_products_creator_id",       columnList = "creator_id"),
-        @Index(name = "idx_products_status",           columnList = "status"),
-        @Index(name = "idx_products_deleted_at",       columnList = "deleted_at"),
-        @Index(name = "idx_products_created_at",       columnList = "created_at"),
-        @Index(name = "idx_products_creator_status",   columnList = "creator_id,status"),
-        @Index(name = "idx_products_price",            columnList = "price_pence")
+        @Index(name = "idx_products_creator_id",     columnList = "creator_id"),
+        @Index(name = "idx_products_status",         columnList = "status"),
+        @Index(name = "idx_products_deleted_at",     columnList = "deleted_at"),
+        @Index(name = "idx_products_created_at",     columnList = "created_at"),
+        @Index(name = "idx_products_creator_status", columnList = "creator_id,status"),
+        @Index(name = "idx_products_price",          columnList = "price_pence"),
+        @Index(name = "idx_products_ukena_owned",    columnList = "is_ukena_owned")
 })
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
@@ -43,7 +44,6 @@ public class Product {
     @Column(name = "piece_story", columnDefinition = "TEXT")
     private String pieceStory;
 
-    // JSON array of strings — kept for materials list
     @Column(columnDefinition = "TEXT")
     @Builder.Default
     private String materials = "[]";
@@ -59,7 +59,6 @@ public class Product {
     @Builder.Default
     private ProductStatus status = ProductStatus.ACTIVE;
 
-    // Images now in a proper table — gallery JSON removed
     @OneToMany(mappedBy = "product",
                cascade = CascadeType.ALL,
                orphanRemoval = true,
@@ -68,13 +67,19 @@ public class Product {
     @Builder.Default
     private List<ProductImage> images = new ArrayList<>();
 
-    // Soft-delete — never hard-delete a product
+    /**
+     * True for products uploaded directly by Uken via the admin dashboard.
+     * These are fulfilled by Uken internally — not by a creator.
+     * Frontend uses this flag to render the "Fulfilled by Uken" badge.
+     */
+    @Column(name = "is_ukena_owned", nullable = false)
+    @Builder.Default
+    private boolean isUkenaOwned = false;
+
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
-    public boolean isDeleted() {
-        return deletedAt != null;
-    }
+    public boolean isDeleted() { return deletedAt != null; }
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
