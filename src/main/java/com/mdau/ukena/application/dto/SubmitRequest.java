@@ -10,5 +10,7 @@ public record SubmitRequest(
         @NotBlank @Size(max = 120) String craft,
         @Min(0) @Max(80) int yearsOfPractice,
         @NotBlank @Size(max = 4000) String story,
-        @NotEmpty @Size(min = 1, max = 5) List<@NotBlank String> photos
+        @Size(max = 5) List<String> photos
+
+
 ) {}
