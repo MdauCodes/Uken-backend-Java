@@ -38,7 +38,7 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
-        if (userRepository.existsByEmail(req.email())) {
+        if (userRepository.existsByEmail(req.email().toLowerCase().trim())) {
             throw ApiException.conflict("An account with this email already exists");
         }
         User user = User.builder()
@@ -48,17 +48,16 @@ public class AuthService {
                 .role(UserRole.ROLE_BUYER)
                 .build();
         userRepository.save(user);
-
-        // Link any guest orders placed with this email
         orderService.linkGuestOrders(user.getEmail(), user);
-
         return new AuthResponse(jwtService.issue(user), toDto(user));
     }
 
     public AuthResponse login(LoginRequest req) {
+        // Normalize so "User@Email.com" matches the stored "user@email.com"
+        String email = req.email().toLowerCase().trim();
         authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(req.email(), req.password()));
-        User user = userRepository.findByEmail(req.email())
+                new UsernamePasswordAuthenticationToken(email, req.password()));
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         if (user.isSuspended()) {
             throw ApiException.forbidden("Your account has been suspended");
@@ -74,7 +73,8 @@ public class AuthService {
 
     @Transactional
     public void forgotPassword(ForgotPasswordRequest req) {
-        userRepository.findByEmail(req.email().toLowerCase().trim()).ifPresent(user -> {
+        String email = req.email().toLowerCase().trim();
+        userRepository.findByEmail(email).ifPresent(user -> {
             resetTokenRepository.deleteExpired(Instant.now());
             String otp = String.format("%06d",
                     ThreadLocalRandom.current().nextInt(0, 1_000_000));

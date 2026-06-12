@@ -69,48 +69,76 @@ public class ApplicationService {
                 .orElseThrow(() -> ApiException.notFound("Application not found"));
 
         ApplicationStatus newStatus = parseStatus(req.status());
-        app.setStatus(newStatus);
+
+        // Guard: if already in this status, just return — no duplicate provisioning
+        if (app.getStatus() == newStatus) {
+            return toDto(app);
+        }
+
         if (req.notes() != null) app.setNotes(req.notes());
+        app.setStatus(newStatus);
         applicationRepo.save(app);
 
         if (newStatus == ApplicationStatus.APPROVED) {
-            boolean alreadyHasAccount = userRepository.existsByEmail(app.getEmail());
-            if (alreadyHasAccount) {
-                // Creator was previously suspended — unsuspend their existing account
-                userRepository.findByEmail(app.getEmail()).ifPresent(user -> {
-                    user.setSuspended(false);
-                    userRepository.save(user);
-                    // Also clear deletedAt on their creator profile
-                    if (user.getCreatorId() != null) {
-                        creatorRepository.findById(user.getCreatorId()).ifPresent(c -> {
+            handleApproval(app);
+        }
+
+        return toDto(app);
+    }
+
+    /**
+     * All approval logic lives here. Called only when transitioning TO APPROVED.
+     * Three possible cases:
+     *   1. User + Creator both exist (re-approval of a previously approved/suspended creator)
+     *   2. User exists but no Creator (edge case: user record orphaned)
+     *   3. Neither exists (fresh approval — happy path)
+     */
+    private void handleApproval(ArtisanApplication app) {
+        String email = app.getEmail().toLowerCase().trim();
+
+        userRepository.findByEmail(email).ifPresentOrElse(
+                existingUser -> {
+                    // Case 1 & 2 — account already exists, just re-activate
+                    existingUser.setSuspended(false);
+                    userRepository.save(existingUser);
+
+                    if (existingUser.getCreatorId() != null) {
+                        creatorRepository.findById(existingUser.getCreatorId()).ifPresent(c -> {
                             c.setDeletedAt(null);
                             creatorRepository.save(c);
                         });
                     }
-                    log.info("Re-activated existing creator account: {}", user.getEmail());
-                });
-                emailService.sendCreatorWelcome(
-                        app.getEmail(), app.getFullName(),
-                        userRepository.findByEmail(app.getEmail())
-                                .map(User::getCreatorId).orElse(""),
-                        null);
-            } else {
-                String tempPassword = provisionCreatorAccount(app);
-                String slug = slugify(app.getFullName());
-                emailService.sendCreatorWelcome(
-                        app.getEmail(), app.getFullName(),
-                        slug, tempPassword);
-            }
-        }
 
-        return toDto(app);
+                    log.info("Re-activated existing creator account: {}", email);
+
+                    emailService.sendCreatorWelcome(
+                            app.getEmail(), app.getFullName(),
+                            existingUser.getCreatorId() != null ? existingUser.getCreatorId() : "",
+                            null);
+                },
+                () -> {
+                    // Case 3 — fresh provisioning
+                    String tempPassword = provisionCreatorAccount(app);
+                    String slug = slugify(app.getFullName());
+                    // slug may have been incremented inside provisionCreatorAccount;
+                    // fetch the actual creatorId from the saved user
+                    String creatorId = userRepository.findByEmail(email)
+                            .map(User::getCreatorId)
+                            .orElse(slug);
+
+                    log.info("Provisioned new creator account: {} ({})", email, creatorId);
+
+                    emailService.sendCreatorWelcome(
+                            app.getEmail(), app.getFullName(),
+                            creatorId, tempPassword);
+                }
+        );
     }
 
     private String provisionCreatorAccount(ArtisanApplication app) {
         String slug = slugify(app.getFullName());
         String finalSlug = slug;
         int count = 1;
-        // Check including soft-deleted to avoid slug conflicts
         while (creatorRepository.existsById(finalSlug)) {
             finalSlug = slug + count++;
         }
@@ -119,7 +147,8 @@ public class ApplicationService {
                 .id(finalSlug)
                 .firstName(app.getFullName().split(" ")[0])
                 .fullName(app.getFullName())
-                .craft(app.getCraft()).region(app.getRegion())
+                .craft(app.getCraft())
+                .region(app.getRegion())
                 .hook(app.getStory().length() > 120
                         ? app.getStory().substring(0, 117) + "..."
                         : app.getStory())
@@ -132,7 +161,7 @@ public class ApplicationService {
         String tempPassword = "Ukena"
                 + ThreadLocalRandom.current().nextInt(1000, 9999) + "!";
         User user = User.builder()
-                .email(app.getEmail())
+                .email(app.getEmail().toLowerCase().trim())
                 .passwordHash(passwordEncoder.encode(tempPassword))
                 .fullName(app.getFullName())
                 .role(UserRole.ROLE_CREATOR)
@@ -140,7 +169,6 @@ public class ApplicationService {
                 .build();
         userRepository.save(user);
 
-        log.info("Creator account provisioned: {} ({})", app.getEmail(), finalSlug);
         return tempPassword;
     }
 
