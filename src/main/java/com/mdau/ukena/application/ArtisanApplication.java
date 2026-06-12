@@ -39,10 +39,10 @@ public class ArtisanApplication {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String story;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String portrait;
 
-    @Column(name = "work_sample", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "work_sample", columnDefinition = "TEXT")
     private String workSample;
 
     @Enumerated(EnumType.STRING)

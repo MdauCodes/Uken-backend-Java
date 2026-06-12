@@ -35,9 +35,9 @@ public class ApplicationService {
                     "An application with this email has already been submitted");
         }
         String id = generateApplicationId();
-        String portrait  = req.photos().get(0);
-        String workSample = req.photos().size() > 1
-                ? req.photos().get(1) : req.photos().get(0);
+        List<String> photos = req.photos() != null ? req.photos() : List.of();
+        String portrait   = photos.isEmpty() ? null : photos.get(0);
+        String workSample = photos.size() > 1 ? photos.get(1) : portrait;
 
         ArtisanApplication app = ArtisanApplication.builder()
                 .id(id).fullName(req.fullName()).email(req.email())
