@@ -111,6 +111,7 @@ public class ApplicationService {
 
                     log.info("Re-activated existing creator account: {}", email);
 
+                    // tempPassword is null for re-activations — the template handles this
                     emailService.sendCreatorWelcome(
                             app.getEmail(), app.getFullName(),
                             existingUser.getCreatorId() != null ? existingUser.getCreatorId() : "",
@@ -119,12 +120,10 @@ public class ApplicationService {
                 () -> {
                     // Case 3 — fresh provisioning
                     String tempPassword = provisionCreatorAccount(app);
-                    String slug = slugify(app.getFullName());
-                    // slug may have been incremented inside provisionCreatorAccount;
-                    // fetch the actual creatorId from the saved user
+
                     String creatorId = userRepository.findByEmail(email)
                             .map(User::getCreatorId)
-                            .orElse(slug);
+                            .orElse(slugify(app.getFullName()));
 
                     log.info("Provisioned new creator account: {} ({})", email, creatorId);
 
@@ -143,6 +142,9 @@ public class ApplicationService {
             finalSlug = slug + count++;
         }
 
+        // Use empty string fallback for NOT NULL image columns when no portrait uploaded
+        String portrait = app.getPortrait() != null ? app.getPortrait() : "";
+
         Creator creator = Creator.builder()
                 .id(finalSlug)
                 .firstName(app.getFullName().split(" ")[0])
@@ -152,9 +154,9 @@ public class ApplicationService {
                 .hook(app.getStory().length() > 120
                         ? app.getStory().substring(0, 117) + "..."
                         : app.getStory())
-                .image(app.getPortrait())
-                .portraitImage(app.getPortrait())
-                .headerImage(app.getPortrait())
+                .image(portrait)
+                .portraitImage(portrait)
+                .headerImage(portrait)
                 .build();
         creatorRepository.save(creator);
 
