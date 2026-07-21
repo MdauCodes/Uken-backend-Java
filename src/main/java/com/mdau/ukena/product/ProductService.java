@@ -399,7 +399,8 @@ public class ProductService {
                         .findFirst().map(ProductImageDto::url).orElse(null);
         Creator c = p.getCreator();
 
-        Object[] ratingRow = reviewRepository.ratingSummary(p.getId());
+        List<Object[]> ratingRows = reviewRepository.ratingSummary(p.getId());
+        Object[] ratingRow = ratingRows.isEmpty() ? null : ratingRows.get(0);
         Double avgRating = ratingRow != null && ratingRow[0] != null ? (Double) ratingRow[0] : null;
         long reviewCount = ratingRow != null && ratingRow[1] != null ? (Long) ratingRow[1] : 0L;
         long unitsSold = orderItemRepository.unitsSold(p.getId());
