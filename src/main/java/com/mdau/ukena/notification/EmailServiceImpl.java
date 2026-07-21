@@ -17,6 +17,7 @@ import org.springframework.ui.freemarker.FreeMarkerTemplateUtils;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -239,6 +240,33 @@ public class EmailServiceImpl implements EmailService {
             log.error("Email exception: {} -> {}: {}", subject, email, e.getMessage());
             return CompletableFuture.completedFuture(false);
         }
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public CompletableFuture<Boolean> sendWeightReminder(
+            String email, String fullName, List<String> productNames) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("name", fullName);
+        model.put("productNames", productNames);
+        model.put("productCount", productNames.size());
+        model.put("dashboardUrl", frontendUrl + "/creator/products");
+        model.put("baseUrl", frontendUrl);
+        return send(email, "Action needed: add package weight for your Ukena pieces",
+                "weight-reminder.ftl", model);
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public CompletableFuture<Boolean> sendWelcomeDiscount(
+            String email, String promoCode, int percentOff) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("promoCode", promoCode);
+        model.put("percentOff", percentOff);
+        model.put("shopUrl", frontendUrl + "/shop");
+        model.put("baseUrl", frontendUrl);
+        return send(email, "Here's your " + percentOff + "% off — welcome to Ukena",
+                "welcome-discount.ftl", model);
     }
 
     @Async("emailTaskExecutor")

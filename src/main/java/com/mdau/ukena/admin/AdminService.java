@@ -14,6 +14,7 @@ import com.mdau.ukena.payment.PaymentService;
 import com.mdau.ukena.payment.PayoutResult;
 import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.product.ProductService;
+import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
@@ -51,19 +52,25 @@ public class AdminService {
     // ── Staff ────────────────────────────────────────────────
 
     @Transactional
-    public StaffDto createStaff(CreateStaffRequest req) {
+    public StaffDto createStaff(CreateStaffRequest req, CurrentUser actingUser) {
         if (userRepository.existsByEmail(req.email()))
             throw ApiException.conflict("An account with this email already exists");
+
+        UserRole role = UserRole.ROLE_SUPPORT;
+        if ("ADMIN".equalsIgnoreCase(req.role())) {
+            requireSuperAdmin(actingUser, "Only the superadmin can create admin accounts");
+            role = UserRole.ROLE_ADMIN;
+        }
+
         User staff = User.builder()
                 .email(req.email().toLowerCase().trim())
                 .passwordHash(passwordEncoder.encode(req.password()))
                 .fullName(req.fullName().trim())
-                .role(UserRole.ROLE_SUPPORT)
+                .role(role)
                 .build();
         userRepository.save(staff);
-        log.info("Support staff created: {}", req.email());
-        return new StaffDto(staff.getId().toString(), staff.getEmail(),
-                staff.getFullName(), staff.getRole().name());
+        log.info("{} account created: {}", role, req.email());
+        return toStaffDto(staff);
     }
 
     @Transactional(readOnly = true)
@@ -71,9 +78,53 @@ public class AdminService {
         return userRepository.findAll().stream()
                 .filter(u -> u.getRole() == UserRole.ROLE_SUPPORT
                           || u.getRole() == UserRole.ROLE_ADMIN)
-                .map(u -> new StaffDto(u.getId().toString(), u.getEmail(),
-                        u.getFullName(), u.getRole().name()))
+                .map(this::toStaffDto)
                 .toList();
+    }
+
+    /** Superadmin-only: promotes an existing support account to admin. */
+    @Transactional
+    public StaffDto promoteToAdmin(UUID targetUserId, CurrentUser actingUser) {
+        requireSuperAdmin(actingUser, "Only the superadmin can promote staff to admin");
+        User target = userRepository.findById(targetUserId)
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        if (target.getRole() != UserRole.ROLE_SUPPORT) {
+            throw ApiException.badRequest("Only support staff can be promoted to admin");
+        }
+        target.setRole(UserRole.ROLE_ADMIN);
+        userRepository.save(target);
+        log.info("{} promoted to admin by {}", target.getEmail(), actingUser.email());
+        return toStaffDto(target);
+    }
+
+    /** Superadmin-only: demotes an admin back to support. Cannot demote the superadmin. */
+    @Transactional
+    public StaffDto demoteToSupport(UUID targetUserId, CurrentUser actingUser) {
+        requireSuperAdmin(actingUser, "Only the superadmin can demote admins");
+        User target = userRepository.findById(targetUserId)
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        if (target.getRole() != UserRole.ROLE_ADMIN) {
+            throw ApiException.badRequest("Only admins can be demoted to support");
+        }
+        if (Boolean.TRUE.equals(target.getSuperAdmin())) {
+            throw ApiException.badRequest("The superadmin account can't be demoted");
+        }
+        target.setRole(UserRole.ROLE_SUPPORT);
+        userRepository.save(target);
+        log.info("{} demoted to support by {}", target.getEmail(), actingUser.email());
+        return toStaffDto(target);
+    }
+
+    private void requireSuperAdmin(CurrentUser actingUser, String message) {
+        boolean isSuperAdmin = userRepository.findById(actingUser.id())
+                .map(u -> Boolean.TRUE.equals(u.getSuperAdmin()))
+                .orElse(false);
+        if (!isSuperAdmin) throw ApiException.forbidden(message);
+    }
+
+    private StaffDto toStaffDto(User u) {
+        return new StaffDto(u.getId().toString(), u.getEmail(), u.getFullName(),
+                u.getRole().name(), Boolean.TRUE.equals(u.getSuperAdmin()));
     }
 
     // ── Buyers ───────────────────────────────────────────────
@@ -108,8 +159,14 @@ public class AdminService {
     @Transactional(readOnly = true)
     public List<AdminCreatorRow> listCreators(String status) {
         String param = (status == null || status.isBlank()) ? null : status.toUpperCase();
-        return creatorRepository.findAllForAdmin(param)
-                .stream().map(this::toAdminCreatorRow).toList();
+        List<Creator> creators = creatorRepository.findAllForAdmin(param);
+        Map<String, String> emailByCreatorId = userRepository
+                .findAllByCreatorIdIn(creators.stream().map(Creator::getId).toList())
+                .stream()
+                .collect(Collectors.toMap(User::getCreatorId, User::getEmail, (a, b) -> a));
+        return creators.stream()
+                .map(c -> toAdminCreatorRow(c, emailByCreatorId.get(c.getId())))
+                .toList();
     }
 
     @Transactional
@@ -287,10 +344,10 @@ public class AdminService {
 
     // ── Mappers ──────────────────────────────────────────────
 
-    private AdminCreatorRow toAdminCreatorRow(Creator c) {
+    private AdminCreatorRow toAdminCreatorRow(Creator c, String email) {
         return new AdminCreatorRow(c.getId(), c.getFirstName(), c.getFullName(),
                 c.getCraft(), c.getRegion(), c.getImage(),
-                c.getDeletedAt() != null, c.getCreatedAt());
+                c.getDeletedAt() != null, c.getCreatedAt(), email);
     }
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {

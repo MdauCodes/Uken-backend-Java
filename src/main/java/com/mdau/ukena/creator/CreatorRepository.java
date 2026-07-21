@@ -11,6 +11,13 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
     Optional<Creator> findActiveById(@Param("id") String id);
     @Query("SELECT c FROM Creator c WHERE c.deletedAt IS NULL")
     Page<Creator> findAllActive(Pageable pageable);
+
+    /** Real makers only — excludes the "ukena" sentinel used for the in-house catalogue. */
+    @Query("SELECT COUNT(c) FROM Creator c WHERE c.deletedAt IS NULL AND c.id <> 'ukena'")
+    long countActiveMakers();
+
+    @Query("SELECT COUNT(DISTINCT c.region) FROM Creator c WHERE c.deletedAt IS NULL AND c.id <> 'ukena'")
+    long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
            "AND (:craft IS NULL OR LOWER(craft) = LOWER(CAST(:craft AS varchar))) " +
            "AND (:region IS NULL OR LOWER(region) = LOWER(CAST(:region AS varchar))) " +

@@ -5,6 +5,8 @@ public record OrderItemDto(
         String name,
         int quantity,
         int pricePence,
+        /** Null for orders placed before weight-based shipping shipped. */
+        Integer weightGrams,
         String image,
         OrderItemCreatorDto creator
 ) {}

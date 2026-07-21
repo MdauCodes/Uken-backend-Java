@@ -37,6 +37,9 @@ public interface ProductRepository extends JpaRepository<Product, String> {
     @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
     Optional<Product> findActiveById(@Param("id") String id);
 
+    @Query("SELECT COUNT(p) FROM Product p WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE")
+    long countActive();
+
     boolean existsByIdAndCreatorId(String id, String creatorId);
 
     @Query("""
@@ -76,4 +79,16 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         AND p.deletedAt IS NULL
     """)
     List<Product> findByCreatorId(@Param("creatorId") String creatorId);
+
+    /** Active, creator-owned (not Uken catalogue) products still missing a weight —
+     *  the pool the weight-reminder email is sent for. */
+    @Query("""
+        SELECT p FROM Product p
+        JOIN FETCH p.creator
+        WHERE p.deletedAt IS NULL
+        AND p.weightGrams IS NULL
+        AND p.isUkenaOwned = false
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+    """)
+    List<Product> findActiveMissingWeight();
 }

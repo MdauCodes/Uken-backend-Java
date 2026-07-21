@@ -10,5 +10,7 @@ public record AdminCreatorRow(
         String region,
         String image,
         boolean suspended,
-        Instant createdAt
+        Instant createdAt,
+        /** Null if the creator's linked user account is somehow missing. */
+        String email
 ) {}

@@ -5,5 +5,6 @@ public record AuthUserDto(
         String email,
         String fullName,
         String role,
-        String creatorId
+        String creatorId,
+        boolean superAdmin
 ) {}

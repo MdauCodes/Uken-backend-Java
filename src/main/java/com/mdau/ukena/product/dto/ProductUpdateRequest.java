@@ -10,5 +10,11 @@ public record ProductUpdateRequest(
         @Size(max = 4000) String pieceStory,
         @Size(max = 20) List<String> materials,
         @Size(max = 200) String dimensions,
-        String care
+        String care,
+        /** Optional here — lets a creator patch weight onto an existing product
+         *  (the missing-weight backfill flow) without resubmitting every field. */
+        @Min(1) @Max(50_000) Integer weightGrams,
+        /** Genuine "was" price for a real markdown — must exceed pricePence. Null = leave
+         *  unchanged; 0 = explicitly clear/end the markdown; positive = set/replace it. */
+        @Min(0) @Max(10_000_000) Integer compareAtPricePence
 ) {}

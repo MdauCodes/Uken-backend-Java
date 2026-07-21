@@ -9,6 +9,10 @@ import com.mdau.ukena.order.dto.*;
 import com.mdau.ukena.product.Product;
 import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.product.ProductStatus;
+import com.mdau.ukena.promo.PromoCode;
+import com.mdau.ukena.promo.PromoCodeService;
+import com.mdau.ukena.shipping.ShippingSettings;
+import com.mdau.ukena.shipping.ShippingSettingsService;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,19 +33,23 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final OrderRepository     orderRepository;
-    private final ProductRepository   productRepository;
-    private final UserRepository      userRepository;
-    private final DeliveryZoneService deliveryZoneService;
-    private final ObjectMapper        objectMapper;
-    private final EmailService        emailService;
+    private final OrderRepository        orderRepository;
+    private final ProductRepository      productRepository;
+    private final UserRepository         userRepository;
+    private final DeliveryZoneService    deliveryZoneService;
+    private final ShippingSettingsService shippingSettingsService;
+    private final PromoCodeService       promoCodeService;
+    private final ObjectMapper           objectMapper;
+    private final EmailService           emailService;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
         String buyerEmail    = buyer != null ? buyer.getEmail()    : req.guestEmail().toLowerCase().trim();
         String buyerFullName = buyer != null ? buyer.getFullName() : req.guestFullName().trim();
 
+        // Zone still picks/validates the delivery country — it no longer prices shipping.
         DeliveryZone zone = deliveryZoneService.getActiveById(req.deliveryZoneId());
+        ShippingSettings shippingSettings = shippingSettingsService.getOrCreate();
 
         List<OrderItem> items = req.items().stream().map(itemReq -> {
             Product product = productRepository.findActiveById(itemReq.productId())
@@ -53,12 +61,16 @@ public class OrderService {
                                 ? product.getName() + " is currently out of stock"
                                 : product.getName() + " is not available for purchase");
             }
+            Integer productWeight = product.getWeightGrams();
+            int unitWeightGrams = (productWeight != null && productWeight > 0)
+                    ? productWeight : shippingSettings.getFallbackWeightGrams();
             return OrderItem.builder()
                     .product(product)
                     .creator(product.getCreator())
                     .productName(product.getName())
                     .quantity(itemReq.quantity())
                     .pricePence(product.getPricePence())
+                    .weightGrams(unitWeightGrams)
                     .image(product.getHeroImage())
                     .creatorFullName(product.getCreator().getFullName())
                     .creatorRegion(product.getCreator().getRegion())
@@ -67,8 +79,21 @@ public class OrderService {
 
         int productsTotalPence = items.stream()
                 .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
-        int shippingPence = zone.getShippingPence();
-        int totalPence    = productsTotalPence + shippingPence;
+        int totalWeightGrams = items.stream()
+                .mapToInt(i -> i.getWeightGrams() * i.getQuantity()).sum();
+        int shippingPence = (int) Math.round(
+                totalWeightGrams / 1000.0 * shippingSettings.getRatePencePerKg());
+
+        // Promo code — validated and priced server-side; the client never dictates the
+        // discount amount, only which code to try.
+        PromoCode promo = null;
+        int discountPence = 0;
+        if (req.promoCode() != null && !req.promoCode().isBlank()) {
+            promo = promoCodeService.validate(req.promoCode());
+            discountPence = (int) Math.round(productsTotalPence * (promo.getPercentOff() / 100.0));
+        }
+
+        int totalPence = productsTotalPence - discountPence + shippingPence;
 
         Order order = Order.builder()
                 .displayId(generateDisplayId())
@@ -77,6 +102,8 @@ public class OrderService {
                 .buyerEmail(buyerEmail)
                 .shippingPence(shippingPence)
                 .deliveryZoneId(zone.getId())
+                .promoCode(promo != null ? promo.getCode() : null)
+                .discountPence(discountPence)
                 .totalPence(totalPence)
                 .delivery(toJson(req.delivery()))
                 .status(OrderStatus.PENDING)
@@ -85,6 +112,10 @@ public class OrderService {
         items.forEach(item -> item.setOrder(order));
         order.getItems().addAll(items);
         Order saved = orderRepository.save(order);
+
+        if (promo != null) {
+            promoCodeService.redeem(promo);
+        }
 
         // Only send buyer acknowledgement — creator notification fires after payment is confirmed
 //        emailService.sendApplicationReceived(
@@ -195,6 +226,7 @@ public class OrderService {
                 new OrderItemDto(
                         i.getProduct() != null ? i.getProduct().getId() : null,
                         i.getProductName(), i.getQuantity(), i.getPricePence(),
+                        i.getWeightGrams(),
                         i.getImage(),
                         new OrderItemCreatorDto(
                                 i.getCreator() != null ? i.getCreator().getId() : null,
@@ -202,7 +234,9 @@ public class OrderService {
         ).toList();
         return new OrderDto(
                 o.getDisplayId(), o.getCreatedAt(), o.getStatus().name(),
-                productsTotalPence, o.getShippingPence(), o.getTotalPence(),
+                productsTotalPence, o.getShippingPence(),
+                o.getPromoCode(), o.getDiscountPence() != null ? o.getDiscountPence() : 0,
+                o.getTotalPence(),
                 new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
                 items, parseDelivery(o.getDelivery()));
     }

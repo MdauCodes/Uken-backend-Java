@@ -4,5 +4,6 @@ public record StaffDto(
         String id,
         String email,
         String fullName,
-        String role
+        String role,
+        boolean superAdmin
 ) {}

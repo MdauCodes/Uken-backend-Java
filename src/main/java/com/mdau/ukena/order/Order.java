@@ -52,6 +52,16 @@ public class Order {
     @Column(name = "delivery_zone_id")
     private UUID deliveryZoneId;
 
+    /** Nullable — most orders have no promo code applied. */
+    @Column(name = "promo_code", length = 40)
+    private String promoCode;
+
+    /** Amount taken off the product subtotal by the promo code, if any. Nullable for the
+     *  same reason as OrderItem.weightGrams was made nullable — this column was added to an
+     *  existing, already-populated table. */
+    @Column(name = "discount_pence")
+    private Integer discountPence;
+
     @Column(name = "total_pence", nullable = false)
     private int totalPence;
 

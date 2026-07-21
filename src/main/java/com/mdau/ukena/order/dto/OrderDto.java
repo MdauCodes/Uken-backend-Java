@@ -9,6 +9,8 @@ public record OrderDto(
         String status,
         int productsTotalPence,
         int shippingPence,
+        String promoCode,
+        int discountPence,
         int totalPence,
         OrderBuyerDto buyer,
         List<OrderItemDto> items,

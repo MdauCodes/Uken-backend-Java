@@ -38,6 +38,12 @@ public class Product {
     @Column(name = "price_pence", nullable = false)
     private int pricePence;
 
+    /** Manually-set "was" price for a genuine markdown — the creator/admin's real
+     *  intended regular price, never auto-generated. Shown as a strikethrough only
+     *  when it's actually higher than pricePence. Null = no markdown active. */
+    @Column(name = "compare_at_price_pence")
+    private Integer compareAtPricePence;
+
     @Column(name = "hero_image", columnDefinition = "TEXT")
     private String heroImage;
 
@@ -53,6 +59,12 @@ public class Product {
 
     @Column(columnDefinition = "TEXT")
     private String care;
+
+    /** Weight of a single unit, in grams — drives weight-based shipping calc.
+     *  Null until the creator sets it (existing products created before this
+     *  feature); required going forward for new products. */
+    @Column(name = "weight_grams")
+    private Integer weightGrams;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)

@@ -114,7 +114,8 @@ public class AuthService {
                 user.getEmail(),
                 user.getFullName(),
                 user.getRole().name(),
-                user.getCreatorId()
+                user.getCreatorId(),
+                Boolean.TRUE.equals(user.getSuperAdmin())
         );
     }
 }

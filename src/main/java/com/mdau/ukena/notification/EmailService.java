@@ -1,9 +1,16 @@
 package com.mdau.ukena.notification;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public interface EmailService {
+
+    CompletableFuture<Boolean> sendWeightReminder(
+            String email, String fullName, List<String> productNames);
+
+    CompletableFuture<Boolean> sendWelcomeDiscount(
+            String email, String promoCode, int percentOff);
 
     CompletableFuture<Boolean> sendOrderConfirmation(
             String buyerEmail, String buyerName,

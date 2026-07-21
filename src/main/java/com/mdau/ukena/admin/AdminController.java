@@ -2,11 +2,17 @@ package com.mdau.ukena.admin;
 
 import com.mdau.ukena.admin.dto.*;
 import com.mdau.ukena.common.ApiResponse;
+import com.mdau.ukena.creator.CreatorService;
+import com.mdau.ukena.creator.dto.CreatorDetail;
+import com.mdau.ukena.creator.dto.CreatorProfileUpdate;
+import com.mdau.ukena.security.CurrentUser;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,19 +25,37 @@ import java.util.UUID;
 public class AdminController {
 
     private final AdminService adminService;
+    private final CreatorService creatorService;
 
     // ── Staff ────────────────────────────────────────────────
 
     @PostMapping("/staff")
     public ResponseEntity<ApiResponse<StaffDto>> createStaff(
-            @Valid @RequestBody CreateStaffRequest req) {
+            @Valid @RequestBody CreateStaffRequest req,
+            @AuthenticationPrincipal CurrentUser currentUser) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(adminService.createStaff(req), "Staff account created"));
+                .body(ApiResponse.ok(adminService.createStaff(req, currentUser), "Staff account created"));
     }
 
     @GetMapping("/staff")
     public ResponseEntity<ApiResponse<List<StaffDto>>> listStaff() {
         return ResponseEntity.ok(ApiResponse.ok(adminService.listStaff()));
+    }
+
+    /** Superadmin-only — enforced in {@code AdminService}, not here, since it
+     *  depends on the acting user's {@code superAdmin} flag, not their role. */
+    @PatchMapping("/staff/{id}/promote")
+    public ResponseEntity<ApiResponse<StaffDto>> promoteStaff(
+            @PathVariable UUID id, @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminService.promoteToAdmin(id, currentUser), "Promoted to admin"));
+    }
+
+    @PatchMapping("/staff/{id}/demote")
+    public ResponseEntity<ApiResponse<StaffDto>> demoteStaff(
+            @PathVariable UUID id, @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminService.demoteToSupport(id, currentUser), "Demoted to support"));
     }
 
     // ── Buyers ───────────────────────────────────────────────
@@ -71,6 +95,25 @@ public class AdminController {
     public ResponseEntity<Void> unsuspendCreator(@PathVariable String id) {
         adminService.unsuspendCreator(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Lets an admin edit a creator's public profile (story, images, craft,
+     * region) exactly as the creator themself could from their own
+     * dashboard — same underlying fields, same {@code CreatorService} calls,
+     * just reached via an admin-only path instead of the creator's own JWT.
+     */
+    @GetMapping("/creators/{id}/profile")
+    public ResponseEntity<ApiResponse<CreatorDetail>> getCreatorProfile(@PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.ok(creatorService.getById(id)));
+    }
+
+    @PutMapping("/creators/{id}/profile")
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
+    public ResponseEntity<ApiResponse<CreatorDetail>> updateCreatorProfile(
+            @PathVariable String id,
+            @Valid @RequestBody CreatorProfileUpdate req) {
+        return ResponseEntity.ok(ApiResponse.ok(creatorService.updateProfile(id, req)));
     }
 
     // ── Payouts ──────────────────────────────────────────────

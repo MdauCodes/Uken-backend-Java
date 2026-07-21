@@ -42,6 +42,13 @@ public class User {
     @Column(nullable = false)
     private boolean suspended = false;
 
+    /** Null/false for everyone except the one account that can create,
+     *  promote, or demote other admin accounts. Nullable (not a primitive
+     *  default) so adding this column is a safe no-op ALTER TABLE on the
+     *  existing, populated users table. */
+    @Column(name = "super_admin")
+    private Boolean superAdmin;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

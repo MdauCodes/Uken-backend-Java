@@ -76,12 +76,18 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/orders").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/delivery-zones").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/shipping-settings").permitAll()
                 .requestMatchers(HttpMethod.GET, "/catalogue").permitAll()
                 .requestMatchers(HttpMethod.GET,
                         "/creators", "/creators/*",
                         "/products", "/products/*",
+                        "/products/*/frequently-bought-with",
                         "/reviews/product/*",
+                        "/platform/stats",
                         "/search").permitAll()
+                .requestMatchers(HttpMethod.GET, "/promo-codes/validate").permitAll()
+                .requestMatchers(HttpMethod.GET, "/promo-codes/status").permitAll()
+                .requestMatchers(HttpMethod.POST, "/promo-codes/welcome-capture").permitAll()
                     .requestMatchers(HttpMethod.GET, "/orders/track-by-email").permitAll()
 
                 .requestMatchers(

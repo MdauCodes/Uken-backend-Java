@@ -119,6 +119,10 @@ ukena:
     brevo-api-url: https://api.brevo.com/v3/smtp/email
     use-brevo-api: ${USE_BREVO_API:true}
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
+    # AES-256 key (exactly 32 bytes) encrypting mailbox IMAP/SMTP credentials at
+    # rest — unrelated to the Brevo settings above, which power transactional
+    # email only. Required, no hardcoded fallback, same posture as JWT_SECRET.
+    encryption-key: ${EMAIL_ENCRYPTION_KEY}
 
   payment:
     provider: ${PAYMENT_PROVIDER:stripe}

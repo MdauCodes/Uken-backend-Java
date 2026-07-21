@@ -12,5 +12,7 @@ public record CreateOrderRequest(
         @NotNull UUID deliveryZoneId,
         UUID buyerId,
         String guestEmail,
-        String guestFullName
+        String guestFullName,
+        /** Optional — validated and applied server-side, never trusted for the discount amount itself. */
+        String promoCode
 ) {}

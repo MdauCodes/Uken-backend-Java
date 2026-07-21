@@ -43,6 +43,16 @@ public class OrderItem {
     @Column(name = "price_pence", nullable = false)
     private int pricePence;
 
+    /** Per-unit weight (grams) used to bill shipping at order time — real product
+     *  weight if the creator had set one, otherwise the platform fallback. Snapshotted
+     *  so historical orders stay accurate even if the product's weight changes later.
+     *  Nullable (not {@code nullable = false}) so adding this column to the existing,
+     *  already-populated {@code order_items} table doesn't fail on deploy — orders
+     *  placed before this feature simply have no weight on record. Always set for
+     *  orders placed from here on ({@link OrderService#place}). */
+    @Column(name = "weight_grams")
+    private Integer weightGrams;
+
     @Column(nullable = false, columnDefinition = "TEXT")
     private String image;
 

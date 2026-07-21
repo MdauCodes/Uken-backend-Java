@@ -2,11 +2,16 @@ package com.mdau.ukena.product;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.admin.ReviewRepository;
 import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
+import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.order.OrderItemRepository;
 import com.mdau.ukena.product.dto.*;
+import com.mdau.ukena.user.User;
+import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -18,7 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.text.Normalizer;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -33,6 +44,10 @@ public class ProductService {
     private final CreatorRepository      creatorRepository;
     private final CloudinaryService      cloudinaryService;
     private final ObjectMapper           objectMapper;
+    private final UserRepository         userRepository;
+    private final EmailService           emailService;
+    private final ReviewRepository       reviewRepository;
+    private final OrderItemRepository    orderItemRepository;
 
     // ── Public browse ────────────────────────────────────────
 
@@ -63,12 +78,53 @@ public class ProductService {
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
     }
 
+    /**
+     * "Frequently bought together" — ranked by real order co-occurrence, not a
+     * fabricated signal. Falls back to same-craft products (excluding this one)
+     * when there isn't enough order history yet, so the section is never empty
+     * on a young platform.
+     */
+    @Transactional(readOnly = true)
+    public List<ProductDto> frequentlyBoughtWith(String productId, int limit) {
+        Product product = productRepository.findActiveById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+
+        List<Object[]> rows = orderItemRepository.frequentlyBoughtWith(productId, PageRequest.of(0, limit));
+        List<Product> results = rows.stream()
+                .map(row -> productRepository.findActiveById((String) row[0]))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .filter(p -> p.getStatus() == ProductStatus.ACTIVE)
+                .toList();
+
+        if (results.size() >= limit) {
+            return results.stream().limit(limit).map(this::toDto).toList();
+        }
+
+        // Fill the remainder with same-craft products, excluding anything already included.
+        Set<String> seen = new HashSet<>();
+        seen.add(productId);
+        results.forEach(p -> seen.add(p.getId()));
+
+        String craft = product.getCreator().getCraft();
+        List<Product> filler = productRepository.browse(null, null, null, PageRequest.of(0, limit + results.size() + 10))
+                .stream()
+                .filter(p -> p.getCreator().getCraft().equalsIgnoreCase(craft) && !seen.contains(p.getId()))
+                .limit((long) limit - results.size())
+                .toList();
+
+        return Stream.concat(results.stream(), filler.stream())
+                .map(this::toDto)
+                .toList();
+    }
+
     // ── Creator CRUD ─────────────────────────────────────────
 
     @Transactional
     public ProductDto create(String creatorId, ProductCreateRequest req) {
         Creator creator = creatorRepository.findActiveById(creatorId)
                 .orElseThrow(() -> ApiException.forbidden("No active creator profile found"));
+        validateCompareAtPrice(req.compareAtPricePence(), req.pricePence());
         String slug = generateSlug(req.name());
         Product product = Product.builder()
                 .id(slug).creator(creator).name(req.name())
@@ -76,10 +132,21 @@ public class ProductService {
                 .pieceStory(req.pieceStory())
                 .materials(toJson(req.materials()))
                 .dimensions(req.dimensions()).care(req.care())
+                .weightGrams(req.weightGrams())
+                .compareAtPricePence(req.compareAtPricePence())
                 .status(ProductStatus.ACTIVE)
                 .isUkenaOwned(false)
                 .build();
         return toDto(productRepository.save(product));
+    }
+
+    /** A "was" price only makes sense — and is only legal to display — if it's genuinely
+     *  higher than the real selling price. Rejects anything that wouldn't be. */
+    private void validateCompareAtPrice(Integer compareAtPricePence, int pricePence) {
+        if (compareAtPricePence != null && compareAtPricePence > 0 && compareAtPricePence <= pricePence) {
+            throw ApiException.badRequest(
+                    "The 'was' price must be higher than the current price — it should be a real price this piece has genuinely sold at.");
+        }
     }
 
     @Transactional
@@ -87,7 +154,8 @@ public class ProductService {
                              ProductUpdateRequest req) {
         Product product = getOwnedProduct(creatorId, productId);
         applyFields(product, req.name(), req.pricePence(), req.heroImage(),
-                req.pieceStory(), req.materials(), req.dimensions(), req.care());
+                req.pieceStory(), req.materials(), req.dimensions(), req.care(), req.weightGrams(),
+                req.compareAtPricePence());
         return toDto(productRepository.save(product));
     }
 
@@ -137,6 +205,7 @@ public class ProductService {
         Creator ukena = creatorRepository.findById(UKENA_CREATOR_ID)
                 .orElseThrow(() -> new IllegalStateException(
                         "Uken sentinel creator not seeded — check DataSeeder"));
+        validateCompareAtPrice(req.compareAtPricePence(), req.pricePence());
         String slug = generateSlug(req.name());
         Product product = Product.builder()
                 .id(slug).creator(ukena).name(req.name())
@@ -144,6 +213,8 @@ public class ProductService {
                 .pieceStory(req.pieceStory())
                 .materials(toJson(req.materials()))
                 .dimensions(req.dimensions()).care(req.care())
+                .weightGrams(req.weightGrams())
+                .compareAtPricePence(req.compareAtPricePence())
                 .status(ProductStatus.ACTIVE)
                 .isUkenaOwned(true)
                 .build();
@@ -159,7 +230,8 @@ public class ProductService {
         if (!product.isUkenaOwned())
             throw ApiException.forbidden("Product is not a Uken catalogue item");
         applyFields(product, req.name(), req.pricePence(), req.heroImage(),
-                req.pieceStory(), req.materials(), req.dimensions(), req.care());
+                req.pieceStory(), req.materials(), req.dimensions(), req.care(), req.weightGrams(),
+                req.compareAtPricePence());
         return toDto(productRepository.save(product));
     }
 
@@ -201,6 +273,27 @@ public class ProductService {
                 .stream().map(this::toDto).toList();
     }
 
+    /** Emails every creator with at least one active product missing a weight,
+     *  listing which of their pieces need it. Returns the number of creators emailed. */
+    @Transactional(readOnly = true)
+    public int sendWeightReminders() {
+        Map<String, List<Product>> byCreator = productRepository.findActiveMissingWeight()
+                .stream().collect(Collectors.groupingBy(p -> p.getCreator().getId()));
+        int sent = 0;
+        for (Map.Entry<String, List<Product>> entry : byCreator.entrySet()) {
+            User user = userRepository.findByCreatorId(entry.getKey()).orElse(null);
+            if (user == null) {
+                log.warn("No user account found for creator {} — skipping weight reminder", entry.getKey());
+                continue;
+            }
+            List<String> names = entry.getValue().stream().map(Product::getName).toList();
+            emailService.sendWeightReminder(user.getEmail(), user.getFullName(), names);
+            sent++;
+        }
+        log.info("Weight reminder emails sent to {} creators", sent);
+        return sent;
+    }
+
     // ── Internal helpers ─────────────────────────────────────
 
     private ProductDto addImageToProduct(Product product, AddImageRequest req) {
@@ -228,7 +321,8 @@ public class ProductService {
 
     private void applyFields(Product p, String name, int pricePence,
                               String heroImage, String pieceStory,
-                              List<String> materials, String dimensions, String care) {
+                              List<String> materials, String dimensions, String care,
+                              Integer weightGrams, Integer compareAtPricePence) {
         p.setName(name);
         p.setPricePence(pricePence);
         if (heroImage != null) {
@@ -243,6 +337,12 @@ public class ProductService {
         if (materials  != null) p.setMaterials(toJson(materials));
         if (dimensions != null) p.setDimensions(dimensions);
         if (care       != null) p.setCare(care);
+        if (weightGrams != null) p.setWeightGrams(weightGrams);
+        if (compareAtPricePence != null) {
+            validateCompareAtPrice(compareAtPricePence, pricePence);
+            // 0 explicitly clears/ends the markdown; a positive value sets/replaces it.
+            p.setCompareAtPricePence(compareAtPricePence == 0 ? null : compareAtPricePence);
+        }
     }
 
     private void purgeImages(Product product) {
@@ -298,14 +398,21 @@ public class ProductService {
                 : images.stream().filter(ProductImageDto::isPrimary)
                         .findFirst().map(ProductImageDto::url).orElse(null);
         Creator c = p.getCreator();
+
+        Object[] ratingRow = reviewRepository.ratingSummary(p.getId());
+        Double avgRating = ratingRow != null && ratingRow[0] != null ? (Double) ratingRow[0] : null;
+        long reviewCount = ratingRow != null && ratingRow[1] != null ? (Long) ratingRow[1] : 0L;
+        long unitsSold = orderItemRepository.unitsSold(p.getId());
+
         return new ProductDto(
-                p.getId(), p.getName(), p.getPricePence(), hero, images,
+                p.getId(), p.getName(), p.getPricePence(), p.getCompareAtPricePence(), hero, images,
                 p.getPieceStory(),
                 parseList(p.getMaterials(), new TypeReference<>() {}),
-                p.getDimensions(), p.getCare(), p.getStatus().name(),
+                p.getDimensions(), p.getCare(), p.getWeightGrams(), p.getStatus().name(),
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
                         c.getRegion(), c.getCraft(), c.getPortraitImage()),
-                p.isUkenaOwned());
+                p.isUkenaOwned(),
+                avgRating, (int) reviewCount, unitsSold);
     }
 
     private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {

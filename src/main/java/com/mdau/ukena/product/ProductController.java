@@ -52,6 +52,14 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(productService.getById(id)));
     }
 
+    /** "Frequently bought together" — ranked by real order co-occurrence (see ProductService). */
+    @GetMapping("/products/{id}/frequently-bought-with")
+    public ResponseEntity<ApiResponse<List<ProductDto>>> frequentlyBoughtWith(
+            @PathVariable String id,
+            @RequestParam(defaultValue = "4") int limit) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.frequentlyBoughtWith(id, limit)));
+    }
+
     // ── Creator CRUD ─────────────────────────────────────────
 
     @GetMapping("/creators/me/products")
@@ -138,6 +146,15 @@ public class ProductController {
     public ResponseEntity<Void> adminDelete(@PathVariable String id) {
         productService.adminDelete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Emails every creator with a product still missing a weight, prompting them to fill it in. */
+    @PostMapping("/admin/products/weight-reminders")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Integer>> sendWeightReminders() {
+        int sent = productService.sendWeightReminders();
+        return ResponseEntity.ok(ApiResponse.ok(sent,
+                sent + " creator" + (sent == 1 ? "" : "s") + " emailed"));
     }
 
     // ── Admin: Uken catalogue management ─────────────────────
