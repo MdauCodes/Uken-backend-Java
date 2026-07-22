@@ -38,20 +38,33 @@ public class MailboxConnectionService {
 
     public Transport openSmtpTransport(Mailbox mailbox) throws MessagingException {
         Session session = smtpSession(mailbox);
-        Transport transport = session.getTransport("smtps");
+        Transport transport = session.getTransport(smtpProtocol(mailbox));
         transport.connect(mailbox.getSmtpHost(), mailbox.getSmtpPort(),
                 mailbox.getUsername(), mailbox.getPassword());
         return transport;
     }
 
     public Session smtpSession(Mailbox mailbox) {
+        String protocol = smtpProtocol(mailbox);
         Properties props = new Properties();
-        props.put("mail.smtps.host", mailbox.getSmtpHost());
-        props.put("mail.smtps.port", String.valueOf(mailbox.getSmtpPort()));
-        props.put("mail.smtps.auth", "true");
-        props.put("mail.smtps.ssl.enable", "true");
-        props.put("mail.smtps.connectiontimeout", "10000");
-        props.put("mail.smtps.timeout", "15000");
+        props.put("mail." + protocol + ".host", mailbox.getSmtpHost());
+        props.put("mail." + protocol + ".port", String.valueOf(mailbox.getSmtpPort()));
+        props.put("mail." + protocol + ".auth", "true");
+        props.put("mail." + protocol + ".connectiontimeout", "10000");
+        props.put("mail." + protocol + ".timeout", "15000");
+        if (protocol.equals("smtps")) {
+            props.put("mail.smtps.ssl.enable", "true");
+        } else {
+            props.put("mail.smtp.starttls.enable", "true");
+            props.put("mail.smtp.starttls.required", "true");
+        }
         return Session.getInstance(props);
+    }
+
+    /** Namecheap Private Email: port 465 is implicit-TLS (smtps); port 587 (and anything
+     *  else) expects STARTTLS negotiated over a plain smtp connection. Forcing smtps on
+     *  a STARTTLS-only port fails the handshake before any useful error surfaces. */
+    public String smtpProtocol(Mailbox mailbox) {
+        return mailbox.getSmtpPort() == 465 ? "smtps" : "smtp";
     }
 }

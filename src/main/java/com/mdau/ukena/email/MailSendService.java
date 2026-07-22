@@ -86,7 +86,7 @@ public class MailSendService {
                 message.setHeader("References", references != null ? references : inReplyTo);
             }
 
-            transport = session.getTransport("smtps");
+            transport = session.getTransport(connectionService.smtpProtocol(mailbox));
             transport.connect(mailbox.getSmtpHost(), mailbox.getSmtpPort(),
                     mailbox.getUsername(), mailbox.getPassword());
             transport.sendMessage(message, message.getAllRecipients());
