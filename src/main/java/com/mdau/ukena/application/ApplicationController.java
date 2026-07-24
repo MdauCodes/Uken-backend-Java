@@ -26,6 +26,14 @@ public class ApplicationController {
                         "Application submitted successfully"));
     }
 
+    // Public — lets the join form warn a returning buyer/applicant before they fill out the whole form
+    @GetMapping("/applications/email-check")
+    public ResponseEntity<ApiResponse<EmailCheckResponse>> emailCheck(
+            @RequestParam String email) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                new EmailCheckResponse(applicationService.emailRegistered(email))));
+    }
+
     // Admin only
     @GetMapping("/admin/applications")
     @PreAuthorize("hasRole('ADMIN')")

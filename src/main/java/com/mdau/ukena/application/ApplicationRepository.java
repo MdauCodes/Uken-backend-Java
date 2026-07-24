@@ -7,4 +7,5 @@ public interface ApplicationRepository extends JpaRepository<ArtisanApplication,
     List<ArtisanApplication> findAllByOrderBySubmittedAtDesc();
     List<ArtisanApplication> findByStatusOrderBySubmittedAtDesc(ApplicationStatus status);
     boolean existsByEmail(String email);
+    boolean existsByEmailIgnoreCase(String email);
 }

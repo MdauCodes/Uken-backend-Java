@@ -2,6 +2,7 @@ package com.mdau.ukena.application;
 
 import com.mdau.ukena.application.dto.*;
 import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.common.Slugify;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
@@ -51,6 +53,14 @@ public class ApplicationService {
         return toDto(app);
     }
 
+    /** Used by the join form to warn a returning buyer before they fill out a whole application. */
+    @Transactional(readOnly = true)
+    public boolean emailRegistered(String email) {
+        String normalized = email.trim();
+        return userRepository.existsByEmailIgnoreCase(normalized)
+                || applicationRepo.existsByEmailIgnoreCase(normalized);
+    }
+
     @Transactional(readOnly = true)
     public List<ApplicationDto> listAll() {
         return applicationRepo.findAllByOrderBySubmittedAtDesc()
@@ -76,12 +86,16 @@ public class ApplicationService {
         }
 
         if (req.notes() != null) app.setNotes(req.notes());
-        app.setStatus(newStatus);
-        applicationRepo.save(app);
 
         if (newStatus == ApplicationStatus.APPROVED) {
-            handleApproval(app);
+            // Applied before saving the status — if this throws (role conflict
+            // needing confirmation), the application stays in its prior status
+            // instead of being silently marked APPROVED with nothing provisioned.
+            handleApproval(app, Boolean.TRUE.equals(req.confirmRoleChange()));
         }
+
+        app.setStatus(newStatus);
+        applicationRepo.save(app);
 
         return toDto(app);
     }
@@ -89,53 +103,78 @@ public class ApplicationService {
     /**
      * All approval logic lives here. Called only when transitioning TO APPROVED.
      * Three possible cases:
-     *   1. User + Creator both exist (re-approval of a previously approved/suspended creator)
-     *   2. User exists but no Creator (edge case: user record orphaned)
-     *   3. Neither exists (fresh approval — happy path)
+     *   1. No account exists yet for this email — fresh provisioning (happy path).
+     *   2. An account exists and is already a creator — re-approval, just
+     *      re-activate it (handles a previously suspended/rejected creator).
+     *   3. An account exists with a different role (buyer, admin, support) —
+     *      converting it to a creator changes what that account can do, so it
+     *      requires an explicit {@code confirmRoleChange} from the admin. A
+     *      person only ever has one role; there's no such thing as "buyer and
+     *      creator" on the same account.
      */
-    private void handleApproval(ArtisanApplication app) {
+    private void handleApproval(ArtisanApplication app, boolean confirmRoleChange) {
         String email = app.getEmail().toLowerCase().trim();
+        Optional<User> existingOpt = userRepository.findByEmail(email);
 
-        userRepository.findByEmail(email).ifPresentOrElse(
-                existingUser -> {
-                    // Case 1 & 2 — account already exists, just re-activate
-                    existingUser.setSuspended(false);
-                    userRepository.save(existingUser);
+        if (existingOpt.isEmpty()) {
+            String tempPassword = provisionNewCreatorAccount(app);
+            String creatorId = userRepository.findByEmail(email)
+                    .map(User::getCreatorId)
+                    .orElse(Slugify.slugify(app.getFullName()));
+            log.info("Provisioned new creator account: {} ({})", email, creatorId);
+            emailService.sendCreatorWelcome(
+                    app.getEmail(), app.getFullName(), creatorId, tempPassword);
+            return;
+        }
 
-                    if (existingUser.getCreatorId() != null) {
-                        creatorRepository.findById(existingUser.getCreatorId()).ifPresent(c -> {
-                            c.setDeletedAt(null);
-                            creatorRepository.save(c);
-                        });
-                    }
+        User existingUser = existingOpt.get();
 
-                    log.info("Re-activated existing creator account: {}", email);
+        if (existingUser.getRole() == UserRole.ROLE_CREATOR) {
+            // Re-activate a previously suspended/rejected creator account
+            existingUser.setSuspended(false);
+            userRepository.save(existingUser);
 
-                    // tempPassword is null for re-activations — the template handles this
-                    emailService.sendCreatorWelcome(
-                            app.getEmail(), app.getFullName(),
-                            existingUser.getCreatorId() != null ? existingUser.getCreatorId() : "",
-                            null);
-                },
-                () -> {
-                    // Case 3 — fresh provisioning
-                    String tempPassword = provisionCreatorAccount(app);
+            if (existingUser.getCreatorId() != null) {
+                creatorRepository.findById(existingUser.getCreatorId()).ifPresent(c -> {
+                    c.setDeletedAt(null);
+                    creatorRepository.save(c);
+                });
+            }
 
-                    String creatorId = userRepository.findByEmail(email)
-                            .map(User::getCreatorId)
-                            .orElse(slugify(app.getFullName()));
+            log.info("Re-activated existing creator account: {}", email);
+            emailService.sendCreatorWelcome(
+                    app.getEmail(), app.getFullName(),
+                    existingUser.getCreatorId() != null ? existingUser.getCreatorId() : "",
+                    null);
+            return;
+        }
 
-                    log.info("Provisioned new creator account: {} ({})", email, creatorId);
+        // Account exists with a non-creator role — require explicit confirmation
+        if (!confirmRoleChange) {
+            throw ApiException.conflict(
+                    "ROLE_CONFLICT: This email already has an existing "
+                            + existingUser.getRole().name()
+                            + " account. Approving will convert that account into a creator"
+                            + " — confirm to proceed.");
+        }
 
-                    emailService.sendCreatorWelcome(
-                            app.getEmail(), app.getFullName(),
-                            creatorId, tempPassword);
-                }
-        );
+        String finalSlug = provisionCreatorProfile(app);
+        UserRole previousRole = existingUser.getRole();
+        existingUser.setRole(UserRole.ROLE_CREATOR);
+        existingUser.setCreatorId(finalSlug);
+        existingUser.setSuspended(false);
+        userRepository.save(existingUser);
+
+        log.info("Converted existing {} account to creator: {} ({})",
+                previousRole, email, finalSlug);
+        // No temp password — they keep whatever password they already had.
+        emailService.sendCreatorWelcome(
+                app.getEmail(), app.getFullName(), finalSlug, null);
     }
 
-    private String provisionCreatorAccount(ArtisanApplication app) {
-        String slug = slugify(app.getFullName());
+    /** Creates the {@code creators} row only — shared by fresh provisioning and role conversion. */
+    private String provisionCreatorProfile(ArtisanApplication app) {
+        String slug = Slugify.slugify(app.getFullName());
         String finalSlug = slug;
         int count = 1;
         while (creatorRepository.existsById(finalSlug)) {
@@ -159,6 +198,11 @@ public class ApplicationService {
                 .headerImage(portrait)
                 .build();
         creatorRepository.save(creator);
+        return finalSlug;
+    }
+
+    private String provisionNewCreatorAccount(ArtisanApplication app) {
+        String finalSlug = provisionCreatorProfile(app);
 
         String tempPassword = "Ukena"
                 + ThreadLocalRandom.current().nextInt(1000, 9999) + "!";
@@ -172,12 +216,6 @@ public class ApplicationService {
         userRepository.save(user);
 
         return tempPassword;
-    }
-
-    private String slugify(String name) {
-        return name.toLowerCase()
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("^-|-$", "");
     }
 
     private String generateApplicationId() {

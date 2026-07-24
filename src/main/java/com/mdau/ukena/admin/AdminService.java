@@ -3,6 +3,7 @@ package com.mdau.ukena.admin;
 import com.mdau.ukena.admin.dto.*;
 import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
+import com.mdau.ukena.common.Slugify;
 import com.mdau.ukena.creator.Creator;
 import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
@@ -152,6 +153,51 @@ public class AdminService {
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(false);
         userRepository.save(user);
+    }
+
+    /**
+     * Fully converts an existing account (any non-creator role) into a
+     * creator — used from the Buyers/Users page when there's no application
+     * on file to source craft/region/story from, so the admin supplies them
+     * directly. A person only ever has one role, so this is a conversion,
+     * never an addition: the account keeps its id, email and password, but
+     * its role and dashboard access change completely.
+     */
+    @Transactional
+    public void convertToCreator(UUID userId, ConvertToCreatorRequest req) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        if (user.getRole() == UserRole.ROLE_CREATOR) {
+            throw ApiException.badRequest("This account is already a creator");
+        }
+
+        String slug = Slugify.slugify(user.getFullName());
+        String finalSlug = slug;
+        int count = 1;
+        while (creatorRepository.existsById(finalSlug)) {
+            finalSlug = slug + count++;
+        }
+
+        Creator creator = Creator.builder()
+                .id(finalSlug)
+                .firstName(user.getFullName().split(" ")[0])
+                .fullName(user.getFullName())
+                .craft(req.craft())
+                .region(req.region())
+                .hook(req.hook())
+                .image("").portraitImage("").headerImage("")
+                .build();
+        creatorRepository.save(creator);
+
+        UserRole previousRole = user.getRole();
+        user.setRole(UserRole.ROLE_CREATOR);
+        user.setCreatorId(finalSlug);
+        userRepository.save(user);
+
+        log.info("Converted {} account to creator via admin users page: {} ({})",
+                previousRole, user.getEmail(), finalSlug);
+        // No temp password — they keep whatever password they already had.
+        emailService.sendCreatorWelcome(user.getEmail(), user.getFullName(), finalSlug, null);
     }
 
     // ── Creators ─────────────────────────────────────────────

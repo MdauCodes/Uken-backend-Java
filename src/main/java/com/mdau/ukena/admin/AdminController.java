@@ -77,6 +77,19 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Directly converts an existing account (any non-creator role) into a
+     * creator from the Users/Buyers page — for makers who never went through
+     * the /join application flow. Requires craft/region/story since there's
+     * no application on file to source them from.
+     */
+    @PostMapping("/buyers/{id}/convert-to-creator")
+    public ResponseEntity<Void> convertToCreator(
+            @PathVariable UUID id, @Valid @RequestBody ConvertToCreatorRequest req) {
+        adminService.convertToCreator(id, req);
+        return ResponseEntity.noContent().build();
+    }
+
     // ── Creators ─────────────────────────────────────────────
 
     @GetMapping("/creators")
