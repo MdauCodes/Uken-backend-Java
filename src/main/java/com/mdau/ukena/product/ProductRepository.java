@@ -37,6 +37,15 @@ public interface ProductRepository extends JpaRepository<Product, String> {
     @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
     Optional<Product> findActiveById(@Param("id") String id);
 
+    /** Admin moderation queue — every product regardless of status or soft-delete,
+     *  so suspended/paused/deleted items aren't invisible to the people who'd fix them. */
+    @Query("""
+        SELECT p FROM Product p
+        JOIN FETCH p.creator
+        ORDER BY p.createdAt DESC
+    """)
+    List<Product> findAllForAdmin();
+
     @Query("SELECT COUNT(p) FROM Product p WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE")
     long countActive();
 

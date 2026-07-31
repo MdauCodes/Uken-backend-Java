@@ -22,5 +22,8 @@ public record ProductDto(
         Double averageRating,
         int reviewCount,
         /** Units sold across confirmed (paid+) orders — real data, never fabricated. */
-        long unitsSold
+        long unitsSold,
+        /** True if soft-deleted (deletedAt set). Only ever populated on the admin
+         *  all-products listing — every other query already excludes these rows. */
+        boolean deleted
 ) {}

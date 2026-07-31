@@ -132,6 +132,15 @@ public class ProductController {
 
     // ── Admin: creator product moderation ────────────────────
 
+    /** Every product regardless of status or soft-delete — the public /products
+     *  listing only ever shows ACTIVE ones, which hides suspended/paused/deleted
+     *  items from admins who'd need to find and restore them. */
+    @GetMapping("/admin/products")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<ProductDto>>> adminListAll() {
+        return ResponseEntity.ok(ApiResponse.ok(productService.listAllForAdmin()));
+    }
+
     @PatchMapping("/admin/products/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<ProductDto>> adminUpdateStatus(

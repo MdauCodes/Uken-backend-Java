@@ -78,6 +78,12 @@ public class ProductService {
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
     }
 
+    /** Admin moderation queue — every product regardless of status or soft-delete. */
+    @Transactional(readOnly = true)
+    public List<ProductDto> listAllForAdmin() {
+        return productRepository.findAllForAdmin().stream().map(this::toDto).toList();
+    }
+
     /**
      * "Frequently bought together" — ranked by real order co-occurrence, not a
      * fabricated signal. Falls back to same-craft products (excluding this one)
@@ -413,7 +419,7 @@ public class ProductService {
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
                         c.getRegion(), c.getCraft(), c.getPortraitImage()),
                 p.isUkenaOwned(),
-                avgRating, (int) reviewCount, unitsSold);
+                avgRating, (int) reviewCount, unitsSold, p.getDeletedAt() != null);
     }
 
     private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {
