@@ -1,6 +1,7 @@
 package com.mdau.ukena.admin;
 
 import com.mdau.ukena.admin.dto.*;
+import com.mdau.ukena.audit.AuditLogService;
 import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.common.Slugify;
@@ -49,6 +50,7 @@ public class AdminService {
     private final EmailService             emailService;
     private final PaymentService           paymentService;
     private final CloudinaryService        cloudinaryService;
+    private final AuditLogService          auditLogService;
 
     // ── Staff ────────────────────────────────────────────────
 
@@ -216,7 +218,7 @@ public class AdminService {
     }
 
     @Transactional
-    public void suspendCreator(String creatorId) {
+    public void suspendCreator(CurrentUser actor, String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(Instant.now());
@@ -227,10 +229,12 @@ public class AdminService {
         });
         int n = productRepository.suspendAllByCreatorId(creatorId);
         log.info("Creator {} suspended - {} products suspended", creatorId, n);
+        auditLogService.record(actor, "CREATOR_SUSPENDED", "CREATOR", creatorId, creator.getFullName(),
+                n + " product(s) suspended along with the creator");
     }
 
     @Transactional
-    public void unsuspendCreator(String creatorId) {
+    public void unsuspendCreator(CurrentUser actor, String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         creator.setDeletedAt(null);
@@ -241,6 +245,8 @@ public class AdminService {
         });
         int n = productRepository.restoreAllByCreatorId(creatorId);
         log.info("Creator {} unsuspended - {} products restored", creatorId, n);
+        auditLogService.record(actor, "CREATOR_UNSUSPENDED", "CREATOR", creatorId, creator.getFullName(),
+                n + " product(s) restored along with the creator");
     }
 
     // ── Payouts ──────────────────────────────────────────────

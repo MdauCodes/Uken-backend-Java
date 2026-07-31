@@ -99,14 +99,16 @@ public class AdminController {
     }
 
     @PatchMapping("/creators/{id}/suspend")
-    public ResponseEntity<Void> suspendCreator(@PathVariable String id) {
-        adminService.suspendCreator(id);
+    public ResponseEntity<Void> suspendCreator(
+            @AuthenticationPrincipal CurrentUser currentUser, @PathVariable String id) {
+        adminService.suspendCreator(currentUser, id);
         return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/creators/{id}/unsuspend")
-    public ResponseEntity<Void> unsuspendCreator(@PathVariable String id) {
-        adminService.unsuspendCreator(id);
+    public ResponseEntity<Void> unsuspendCreator(
+            @AuthenticationPrincipal CurrentUser currentUser, @PathVariable String id) {
+        adminService.unsuspendCreator(currentUser, id);
         return ResponseEntity.noContent().build();
     }
 

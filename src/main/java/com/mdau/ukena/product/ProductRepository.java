@@ -37,6 +37,16 @@ public interface ProductRepository extends JpaRepository<Product, String> {
     @Query("SELECT p FROM Product p WHERE p.id = :id AND p.deletedAt IS NULL")
     Optional<Product> findActiveById(@Param("id") String id);
 
+    /** Soft-deleted past the 7-day recovery window, images not yet purged —
+     *  the pool the nightly purge job works through. */
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.deletedAt IS NOT NULL
+        AND p.deletedAt < :cutoff
+        AND (p.imagesPurged IS NULL OR p.imagesPurged = false)
+    """)
+    List<Product> findExpiredSoftDeleted(@Param("cutoff") java.time.Instant cutoff);
+
     /** Admin moderation queue — every product regardless of status or soft-delete,
      *  so suspended/paused/deleted items aren't invisible to the people who'd fix them. */
     @Query("""

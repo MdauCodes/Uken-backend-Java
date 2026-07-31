@@ -3,6 +3,7 @@ package com.mdau.ukena.product;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mdau.ukena.admin.ReviewRepository;
+import com.mdau.ukena.audit.AuditLogService;
 import com.mdau.ukena.cloudinary.CloudinaryService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.creator.Creator;
@@ -10,6 +11,7 @@ import com.mdau.ukena.creator.CreatorRepository;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.order.OrderItemRepository;
 import com.mdau.ukena.product.dto.*;
+import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.User;
 import com.mdau.ukena.user.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +50,7 @@ public class ProductService {
     private final EmailService           emailService;
     private final ReviewRepository       reviewRepository;
     private final OrderItemRepository    orderItemRepository;
+    private final AuditLogService        auditLogService;
 
     // ── Public browse ────────────────────────────────────────
 
@@ -166,42 +169,99 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductDto updateStatusByCreator(String creatorId, String productId,
+    public ProductDto updateStatusByCreator(CurrentUser actor, String productId,
                                             ProductStatusUpdateRequest req) {
-        Product product = getOwnedProduct(creatorId, productId);
+        Product product = getOwnedProduct(actor.creatorId(), productId);
+        ProductStatus prev = product.getStatus();
         ProductStatus next = parseStatus(req.status());
         if (next == ProductStatus.SUSPENDED_BY_ADMIN)
             throw ApiException.forbidden("Only admins can set SUSPENDED_BY_ADMIN");
         product.setStatus(next);
-        return toDto(productRepository.save(product));
+        ProductDto dto = toDto(productRepository.save(product));
+        auditLogService.record(actor, "PRODUCT_STATUS_CHANGED", "PRODUCT", productId, product.getName(),
+                prev + " -> " + next + " (by creator)");
+        return dto;
     }
 
     @Transactional
-    public ProductDto updateStatusByAdmin(String productId,
+    public ProductDto updateStatusByAdmin(CurrentUser actor, String productId,
                                           ProductStatusUpdateRequest req) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
-        product.setStatus(parseStatus(req.status()));
-        return toDto(productRepository.save(product));
+        ProductStatus prev = product.getStatus();
+        ProductStatus next = parseStatus(req.status());
+        product.setStatus(next);
+        ProductDto dto = toDto(productRepository.save(product));
+        auditLogService.record(actor, "PRODUCT_STATUS_CHANGED", "PRODUCT", productId, product.getName(),
+                prev + " -> " + next + " (by admin)");
+        return dto;
     }
 
+    /** Soft-delete only — images are kept for a 7-day recovery window (see
+     *  {@link #purgeExpiredDeletedProducts()}), not purged immediately. */
     @Transactional
-    public void delete(String creatorId, String productId) {
-        Product product = getOwnedProduct(creatorId, productId);
-        purgeImages(product);
+    public void delete(CurrentUser actor, String productId) {
+        Product product = getOwnedProduct(actor.creatorId(), productId);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
-        log.info("Product {} soft-deleted by creator {}", productId, creatorId);
+        log.info("Product {} soft-deleted by creator {} — 7-day recovery window started",
+                productId, actor.creatorId());
+        auditLogService.record(actor, "PRODUCT_DELETED", "PRODUCT", productId, product.getName(),
+                "Soft-deleted by creator; images retained for 7 days");
     }
 
+    /** Soft-delete only — see {@link #delete(CurrentUser, String)}. */
     @Transactional
-    public void adminDelete(String productId) {
+    public void adminDelete(CurrentUser actor, String productId) {
         Product product = productRepository.findActiveById(productId)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
-        purgeImages(product);
         product.setDeletedAt(Instant.now());
         productRepository.save(product);
-        log.info("Product {} soft-deleted by admin", productId);
+        log.info("Product {} soft-deleted by admin — 7-day recovery window started", productId);
+        auditLogService.record(actor, "PRODUCT_DELETED", "PRODUCT", productId, product.getName(),
+                "Soft-deleted by admin; images retained for 7 days");
+    }
+
+    /** Admin-only recovery within the 7-day window — reverses {@link #delete}/{@link #adminDelete}
+     *  as long as the nightly purge job hasn't already removed the images. */
+    @Transactional
+    public ProductDto restoreProduct(CurrentUser actor, String productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> ApiException.notFound("Product not found"));
+        if (product.getDeletedAt() == null) {
+            throw ApiException.badRequest("This product isn't deleted.");
+        }
+        if (product.isImagesPurged()) {
+            throw ApiException.badRequest(
+                    "Past the 7-day recovery window — its images were already permanently removed.");
+        }
+        product.setDeletedAt(null);
+        ProductDto dto = toDto(productRepository.save(product));
+        auditLogService.record(actor, "PRODUCT_RESTORED", "PRODUCT", productId, product.getName(),
+                "Restored within the 7-day recovery window");
+        return dto;
+    }
+
+    /** Nightly job entry point — purges Cloudinary images for anything soft-deleted
+     *  more than 7 days ago that hasn't been purged yet. Never blocks/throws on a
+     *  single failure; logs and continues so one bad row can't stall the batch. */
+    @Transactional
+    public void purgeExpiredDeletedProducts() {
+        List<Product> expired = productRepository.findExpiredSoftDeleted(
+                Instant.now().minus(7, java.time.temporal.ChronoUnit.DAYS));
+        for (Product product : expired) {
+            try {
+                purgeImages(product);
+                product.setImagesPurged(true);
+                productRepository.save(product);
+                auditLogService.record(null, "PRODUCT_IMAGES_PURGED", "PRODUCT",
+                        product.getId(), product.getName(),
+                        "7-day recovery window expired; Cloudinary images purged");
+                log.info("Purged images for expired soft-deleted product {}", product.getId());
+            } catch (Exception e) {
+                log.error("Failed to purge images for product {}: {}", product.getId(), e.getMessage());
+            }
+        }
     }
 
     // ── Uken catalogue (admin-managed) ───────────────────────
@@ -419,7 +479,8 @@ public class ProductService {
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
                         c.getRegion(), c.getCraft(), c.getPortraitImage()),
                 p.isUkenaOwned(),
-                avgRating, (int) reviewCount, unitsSold, p.getDeletedAt() != null);
+                avgRating, (int) reviewCount, unitsSold,
+                p.getDeletedAt() != null, p.getDeletedAt(), p.isImagesPurged());
     }
 
     private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {

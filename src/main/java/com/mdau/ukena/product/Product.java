@@ -91,7 +91,18 @@ public class Product {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /** Null/false for the first 7 days after deletion — images still sit in
+     *  Cloudinary and an admin can fully restore the listing. A scheduled job
+     *  purges the images and flips this to true once the grace period expires,
+     *  after which restore only brings back the metadata, not the photos.
+     *  Boxed (not primitive) and nullable so adding this column via ddl-auto
+     *  never risks a NOT-NULL ALTER TABLE failure against existing rows. */
+    @Column(name = "images_purged")
+    private Boolean imagesPurged;
+
     public boolean isDeleted() { return deletedAt != null; }
+
+    public boolean isImagesPurged() { return Boolean.TRUE.equals(imagesPurged); }
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

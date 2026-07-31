@@ -98,7 +98,7 @@ public class ProductController {
             @PathVariable String id,
             @Valid @RequestBody ProductStatusUpdateRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(
-                productService.updateStatusByCreator(currentUser.creatorId(), id, req)));
+                productService.updateStatusByCreator(currentUser, id, req)));
     }
 
     @DeleteMapping("/creators/me/products/{id}")
@@ -106,7 +106,7 @@ public class ProductController {
     public ResponseEntity<Void> delete(
             @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable String id) {
-        productService.delete(currentUser.creatorId(), id);
+        productService.delete(currentUser, id);
         return ResponseEntity.noContent().build();
     }
 
@@ -144,17 +144,31 @@ public class ProductController {
     @PatchMapping("/admin/products/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<ProductDto>> adminUpdateStatus(
+            @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable String id,
             @Valid @RequestBody ProductStatusUpdateRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(
-                productService.updateStatusByAdmin(id, req)));
+                productService.updateStatusByAdmin(currentUser, id, req)));
     }
 
     @DeleteMapping("/admin/products/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> adminDelete(@PathVariable String id) {
-        productService.adminDelete(id);
+    public ResponseEntity<Void> adminDelete(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id) {
+        productService.adminDelete(currentUser, id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Undo a soft-delete within the 7-day recovery window, before the nightly
+     *  job purges the Cloudinary images. Works for both creator and Uken products. */
+    @PostMapping("/admin/products/{id}/restore")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductDto>> restore(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                productService.restoreProduct(currentUser, id), "Product restored"));
     }
 
     /** Emails every creator with a product still missing a weight, prompting them to fill it in. */
@@ -189,16 +203,19 @@ public class ProductController {
     @PatchMapping("/admin/catalogue/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<ProductDto>> catalogueUpdateStatus(
+            @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable String id,
             @Valid @RequestBody ProductStatusUpdateRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(
-                productService.updateStatusByAdmin(id, req)));
+                productService.updateStatusByAdmin(currentUser, id, req)));
     }
 
     @DeleteMapping("/admin/catalogue/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> catalogueDelete(@PathVariable String id) {
-        productService.adminDelete(id);
+    public ResponseEntity<Void> catalogueDelete(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String id) {
+        productService.adminDelete(currentUser, id);
         return ResponseEntity.noContent().build();
     }
 

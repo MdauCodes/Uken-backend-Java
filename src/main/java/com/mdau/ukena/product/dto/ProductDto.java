@@ -25,5 +25,10 @@ public record ProductDto(
         long unitsSold,
         /** True if soft-deleted (deletedAt set). Only ever populated on the admin
          *  all-products listing — every other query already excludes these rows. */
-        boolean deleted
+        boolean deleted,
+        /** When it was deleted — null unless {@code deleted} is true. */
+        java.time.Instant deletedAt,
+        /** True once the 7-day recovery window has expired and images were purged —
+         *  restore is only possible while this is false. */
+        boolean imagesPurged
 ) {}
