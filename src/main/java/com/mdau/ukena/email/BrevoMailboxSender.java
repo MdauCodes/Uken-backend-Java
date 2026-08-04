@@ -63,8 +63,11 @@ public class BrevoMailboxSender {
     /** @param inReplyTo original Message-ID (RFC 822) when this is a reply, else null. */
     public void send(Mailbox mailbox, SendEmailRequest req, List<MultipartFile> attachments,
                       String inReplyTo, String references) throws IOException {
+        String senderName = req.senderName() != null && !req.senderName().isBlank()
+                ? req.senderName() : mailbox.getDisplayName();
+
         Map<String, Object> payload = new HashMap<>();
-        payload.put("sender", Map.of("name", mailbox.getDisplayName(), "email", mailbox.getAddress()));
+        payload.put("sender", Map.of("name", senderName, "email", mailbox.getAddress()));
         payload.put("to", toAddressList(req.to()));
         if (req.cc() != null && !req.cc().isEmpty()) payload.put("cc", toAddressList(req.cc()));
         if (req.bcc() != null && !req.bcc().isEmpty()) payload.put("bcc", toAddressList(req.bcc()));

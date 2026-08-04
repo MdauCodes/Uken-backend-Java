@@ -6,4 +6,9 @@ public record EmailTemplateRequest(
         @NotBlank String name,
         @NotBlank String htmlContent,
         String thumbnailUrl,
-        String category) {}
+        String category,
+        String logoUrl,
+        String accentColor,
+        String senderName,
+        String ctaLabel,
+        String ctaUrl) {}

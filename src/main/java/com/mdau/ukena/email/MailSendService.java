@@ -177,7 +177,9 @@ public class MailSendService {
     private MimeMessage buildMimeMessage(Session session, Mailbox mailbox, SendEmailRequest req,
                                           List<MultipartFile> attachments) throws MessagingException, IOException {
         MimeMessage message = new MimeMessage(session);
-        message.setFrom(new InternetAddress(mailbox.getAddress(), mailbox.getDisplayName(), "UTF-8"));
+        String senderName = req.senderName() != null && !req.senderName().isBlank()
+                ? req.senderName() : mailbox.getDisplayName();
+        message.setFrom(new InternetAddress(mailbox.getAddress(), senderName, "UTF-8"));
 
         for (String to : req.to()) {
             message.addRecipient(Message.RecipientType.TO, new InternetAddress(to));

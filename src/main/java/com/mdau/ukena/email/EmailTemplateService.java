@@ -29,6 +29,11 @@ public class EmailTemplateService {
                 .htmlContent(req.htmlContent())
                 .thumbnailUrl(req.thumbnailUrl())
                 .category(req.category())
+                .logoUrl(req.logoUrl())
+                .accentColor(req.accentColor())
+                .senderName(req.senderName())
+                .ctaLabel(req.ctaLabel())
+                .ctaUrl(req.ctaUrl())
                 .createdBy(createdBy)
                 .build());
         return toDto(saved);
@@ -40,6 +45,11 @@ public class EmailTemplateService {
         t.setHtmlContent(req.htmlContent());
         t.setThumbnailUrl(req.thumbnailUrl());
         t.setCategory(req.category());
+        t.setLogoUrl(req.logoUrl());
+        t.setAccentColor(req.accentColor());
+        t.setSenderName(req.senderName());
+        t.setCtaLabel(req.ctaLabel());
+        t.setCtaUrl(req.ctaUrl());
         return toDto(templateRepository.save(t));
     }
 
@@ -55,6 +65,7 @@ public class EmailTemplateService {
 
     private EmailTemplateDto toDto(EmailTemplate t) {
         return new EmailTemplateDto(t.getId(), t.getName(), t.getHtmlContent(),
-                t.getThumbnailUrl(), t.getCategory(), t.getCreatedAt(), t.getUpdatedAt());
+                t.getThumbnailUrl(), t.getCategory(), t.getLogoUrl(), t.getAccentColor(),
+                t.getSenderName(), t.getCtaLabel(), t.getCtaUrl(), t.getCreatedAt(), t.getUpdatedAt());
     }
 }

@@ -13,4 +13,8 @@ public record SendEmailRequest(
         List<String> cc,
         List<String> bcc,
         @NotBlank String subject,
-        @NotBlank String htmlBody) {}
+        @NotBlank String htmlBody,
+        /** Overrides the mailbox's own display name as the visible "From" sender
+         *  for this one send — e.g. picked up from the chosen template. Null = use
+         *  the mailbox's own display name. */
+        String senderName) {}
