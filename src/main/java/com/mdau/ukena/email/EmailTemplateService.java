@@ -28,6 +28,7 @@ public class EmailTemplateService {
                 .name(req.name())
                 .htmlContent(req.htmlContent())
                 .thumbnailUrl(req.thumbnailUrl())
+                .category(req.category())
                 .createdBy(createdBy)
                 .build());
         return toDto(saved);
@@ -38,6 +39,7 @@ public class EmailTemplateService {
         t.setName(req.name());
         t.setHtmlContent(req.htmlContent());
         t.setThumbnailUrl(req.thumbnailUrl());
+        t.setCategory(req.category());
         return toDto(templateRepository.save(t));
     }
 
@@ -53,6 +55,6 @@ public class EmailTemplateService {
 
     private EmailTemplateDto toDto(EmailTemplate t) {
         return new EmailTemplateDto(t.getId(), t.getName(), t.getHtmlContent(),
-                t.getThumbnailUrl(), t.getCreatedAt(), t.getUpdatedAt());
+                t.getThumbnailUrl(), t.getCategory(), t.getCreatedAt(), t.getUpdatedAt());
     }
 }

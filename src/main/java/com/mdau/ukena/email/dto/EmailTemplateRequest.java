@@ -5,4 +5,5 @@ import jakarta.validation.constraints.NotBlank;
 public record EmailTemplateRequest(
         @NotBlank String name,
         @NotBlank String htmlContent,
-        String thumbnailUrl) {}
+        String thumbnailUrl,
+        String category) {}

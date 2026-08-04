@@ -30,6 +30,12 @@ public class EmailTemplate {
     @Column(name = "thumbnail_url", length = 500)
     private String thumbnailUrl;
 
+    /** Free-form grouping for the template picker — "PITCH", "REPLY", "CREATOR",
+     *  or "GENERAL" by convention, but not an enum so new categories don't need
+     *  a migration. Nullable — older templates predate this field. */
+    @Column(length = 30)
+    private String category;
+
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
 
