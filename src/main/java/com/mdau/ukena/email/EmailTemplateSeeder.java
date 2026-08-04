@@ -36,6 +36,12 @@ public class EmailTemplateSeeder implements ApplicationRunner {
     private static final String BODY_TEXT = "#2C2420";
     private static final String FOOTER_TEXT = "#8B6040";
     private static final String ADDRESS = "UKEN &middot; Osmaston 10, Nottingham NG7 1SD &middot; ukena.co.uk";
+    private static final String LOGO_URL = "https://ukena.co.uk/email-assets/uken-logo-light.png";
+    private static final String ABOUT_BLURB = """
+        <strong style="color:#1a0f07;">About UKEN</strong> &mdash; we connect independent artisans and \
+        farmers across Kenya and the UK directly with buyers who value the story behind what they own. \
+        Every piece is made by hand, priced fairly, and shipped with the maker's name attached &mdash; \
+        no middleman markup, no anonymous factory batch.""";
 
     private final EmailTemplateRepository templateRepository;
     private final UserRepository userRepository;
@@ -68,16 +74,20 @@ public class EmailTemplateSeeder implements ApplicationRunner {
     private static String letterhead(String body) {
         return """
             <div style="font-family: %s; max-width:560px; margin:0 auto;">
-              <div style="padding:24px 0; border-bottom:2px solid %s;">
-                <strong style="font-size:20px; letter-spacing:0.08em; color:%s;">UKEN</strong>
+              <div style="padding:20px 0; border-bottom:2px solid %s; text-align:center; background:%s;">
+                <img src="%s" alt="UKEN" height="44" style="height:44px; width:auto; display:inline-block;">
               </div>
               <div style="padding:28px 0; color:%s; line-height:1.7;">
                 %s
               </div>
-              <div style="padding:16px 0; border-top:1px solid #eee; font-size:12px; color:%s;">
+              <div style="padding:18px 24px; background:#f5f1eb; font-size:12px; line-height:1.6; color:%s; border-top:1px solid #ecdfd0;">
                 %s
               </div>
-            </div>""".formatted(FONT, CLAY, INK, BODY_TEXT, body, FOOTER_TEXT, ADDRESS);
+              <div style="padding:12px 0; font-size:12px; color:%s; text-align:center;">
+                %s
+              </div>
+            </div>""".formatted(
+                FONT, CLAY, INK, LOGO_URL, BODY_TEXT, body, FOOTER_TEXT, ABOUT_BLURB, FOOTER_TEXT, ADDRESS);
     }
 
     private static String button(String label, String href) {
