@@ -25,6 +25,7 @@ public class MailSendService {
 
     private final MailboxConnectionService connectionService;
     private final InboxService inboxService;
+    private final BrevoMailboxSender brevoMailboxSender;
 
     public void send(Mailbox mailbox, SendEmailRequest req, List<MultipartFile> attachments) {
         sendInternal(mailbox, req, attachments, null, null);
@@ -75,10 +76,13 @@ public class MailSendService {
 
     // ── send ─────────────────────────────────────────────────────────────
 
+    /** Sends via Brevo's API when configured — direct SMTP to mail.privateemail.com
+     *  is blocked outbound from Railway's IP ranges (confirmed: both port 465 and
+     *  587 time out on connect, while IMAP on 993 works fine), so Brevo is the
+     *  reliable path. Falls back to direct SMTP only if Brevo isn't configured. */
     private void sendInternal(Mailbox mailbox, SendEmailRequest req, List<MultipartFile> attachments,
                                String inReplyTo, String references) {
         Session session = connectionService.smtpSession(mailbox);
-        Transport transport = null;
         try {
             MimeMessage message = buildMimeMessage(session, mailbox, req, attachments);
             if (inReplyTo != null && !inReplyTo.isBlank()) {
@@ -86,16 +90,28 @@ public class MailSendService {
                 message.setHeader("References", references != null ? references : inReplyTo);
             }
 
+            if (brevoMailboxSender.isConfigured()) {
+                brevoMailboxSender.send(mailbox, req, attachments, inReplyTo, references);
+                log.info("Email sent via Brevo from {} to {}", mailbox.getAddress(), req.to());
+            } else {
+                sendViaDirectSmtp(session, mailbox, message);
+                log.info("Email sent via direct SMTP from {} to {}", mailbox.getAddress(), req.to());
+            }
+
+            copyToSentFolder(mailbox, message);
+        } catch (MessagingException | IOException e) {
+            log.error("Send failed for mailbox {}: {}", mailbox.getAddress(), e.getMessage());
+            throw ApiException.internalError("Failed to send email. Please try again.");
+        }
+    }
+
+    private void sendViaDirectSmtp(Session session, Mailbox mailbox, MimeMessage message) throws MessagingException {
+        Transport transport = null;
+        try {
             transport = session.getTransport(connectionService.smtpProtocol(mailbox));
             transport.connect(mailbox.getSmtpHost(), mailbox.getSmtpPort(),
                     mailbox.getUsername(), mailbox.getPassword());
             transport.sendMessage(message, message.getAllRecipients());
-            log.info("Email sent from {} to {}", mailbox.getAddress(), req.to());
-
-            copyToSentFolder(mailbox, message);
-        } catch (MessagingException | IOException e) {
-            log.error("SMTP send failed for mailbox {}: {}", mailbox.getAddress(), e.getMessage());
-            throw ApiException.internalError("Failed to send email. Please try again.");
         } finally {
             if (transport != null) {
                 try {
