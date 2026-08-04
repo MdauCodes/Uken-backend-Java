@@ -89,7 +89,7 @@ public class EmailController {
             @RequestPart(value = "attachments", required = false) List<MultipartFile> attachments) {
         Mailbox mailbox = mailboxService.getActiveOrThrow(mailboxId);
         mailSendService.send(mailbox, payload, attachments);
-        return ResponseEntity.ok().build();
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping(value = "/mailboxes/{mailboxId}/messages/{uid}/reply", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -103,7 +103,7 @@ public class EmailController {
         Mailbox mailbox = mailboxService.getActiveOrThrow(mailboxId);
         EmailMessageDetailDto original = inboxService.getMessage(mailbox, folder, uid);
         mailSendService.reply(mailbox, payload, attachments, original.messageIdHeader());
-        return ResponseEntity.ok().build();
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping(value = "/mailboxes/{mailboxId}/messages/{uid}/forward", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -115,7 +115,7 @@ public class EmailController {
             @RequestPart(value = "attachments", required = false) List<MultipartFile> attachments) {
         Mailbox mailbox = mailboxService.getActiveOrThrow(mailboxId);
         mailSendService.forward(mailbox, payload, attachments);
-        return ResponseEntity.ok().build();
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping(value = "/mailboxes/{mailboxId}/drafts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
