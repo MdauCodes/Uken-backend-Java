@@ -11,4 +11,9 @@ public record MailboxUpdateRequest(
         String username,
         /** Blank/null keeps the existing password — only rotate it when a value is sent. */
         String password,
-        boolean active) {}
+        boolean active,
+        /** Blank/null clears the field — unlike the other optional fields above,
+         *  a blank signature name is how an admin removes a mailbox's signature. */
+        String signatureName,
+        String signatureTitle,
+        String signaturePhone) {}

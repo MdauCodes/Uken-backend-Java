@@ -57,6 +57,20 @@ public class Mailbox {
     @Column(nullable = false)
     private boolean active = true;
 
+    /** Sign-off shown at the end of every email sent from this mailbox,
+     *  regardless of which letterhead template is used — e.g. "Andrew Soi" /
+     *  "Founder &amp; CEO, UKEN" / "+254 700 000 000" for a personal mailbox.
+     *  All nullable: a mailbox with no signatureName configured gets no
+     *  signature block appended at all. */
+    @Column(name = "signature_name", length = 120)
+    private String signatureName;
+
+    @Column(name = "signature_title", length = 160)
+    private String signatureTitle;
+
+    @Column(name = "signature_phone", length = 40)
+    private String signaturePhone;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

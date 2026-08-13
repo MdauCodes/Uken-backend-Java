@@ -78,6 +78,9 @@ public class MailboxService {
         if (req.username() != null && !req.username().isBlank()) m.setUsername(req.username());
         if (req.password() != null && !req.password().isBlank()) m.setPassword(req.password());
         m.setActive(req.active());
+        m.setSignatureName(blankToNull(req.signatureName()));
+        m.setSignatureTitle(blankToNull(req.signatureTitle()));
+        m.setSignaturePhone(blankToNull(req.signaturePhone()));
         return toAdminDto(mailboxRepository.save(m));
     }
 
@@ -125,13 +128,20 @@ public class MailboxService {
 
     // ── mapping ──────────────────────────────────────────────────────────
 
+    private String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
     private MailboxDto toDto(Mailbox m) {
-        return new MailboxDto(m.getId(), m.getAddress(), m.getDisplayName(), m.isActive());
+        return new MailboxDto(m.getId(), m.getAddress(), m.getDisplayName(), m.isActive(),
+                m.getSignatureName(), m.getSignatureTitle(), m.getSignaturePhone());
     }
 
     private MailboxAdminDto toAdminDto(Mailbox m) {
         return new MailboxAdminDto(m.getId(), m.getAddress(), m.getDisplayName(),
                 m.getImapHost(), m.getImapPort(), m.getSmtpHost(), m.getSmtpPort(),
-                m.getUsername(), m.isActive(), m.getCreatedAt(), m.getUpdatedAt());
+                m.getUsername(), m.isActive(),
+                m.getSignatureName(), m.getSignatureTitle(), m.getSignaturePhone(),
+                m.getCreatedAt(), m.getUpdatedAt());
     }
 }

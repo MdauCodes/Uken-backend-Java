@@ -14,5 +14,8 @@ public record MailboxAdminDto(
         int smtpPort,
         String username,
         boolean active,
+        String signatureName,
+        String signatureTitle,
+        String signaturePhone,
         Instant createdAt,
         Instant updatedAt) {}
