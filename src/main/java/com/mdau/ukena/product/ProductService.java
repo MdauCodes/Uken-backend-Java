@@ -76,9 +76,17 @@ public class ProductService {
     public ProductDto getById(String id) {
         return productRepository.findActiveById(id)
                 .filter(p -> p.getStatus() != ProductStatus.SUSPENDED_BY_ADMIN
-                          && p.getStatus() != ProductStatus.SUSPENDED_BY_CREATOR)
+                          && p.getStatus() != ProductStatus.SUSPENDED_BY_CREATOR
+                          && p.isAvailableOnline())
                 .map(this::toDto)
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
+    }
+
+    /** POS browse grid — Uken's own catalogue, ACTIVE only, market-only pieces included. */
+    @Transactional(readOnly = true)
+    public List<ProductDto> browseForPos() {
+        return productRepository.browseForPos(UKENA_CREATOR_ID)
+                .stream().map(this::toDto).toList();
     }
 
     /** Admin moderation queue — every product regardless of status or soft-delete. */
@@ -143,6 +151,7 @@ public class ProductService {
                 .dimensions(req.dimensions()).care(req.care())
                 .weightGrams(req.weightGrams())
                 .compareAtPricePence(req.compareAtPricePence())
+                .unitsAvailable(req.unitsAvailable())
                 .status(ProductStatus.ACTIVE)
                 .isUkenaOwned(false)
                 .build();
@@ -164,7 +173,7 @@ public class ProductService {
         Product product = getOwnedProduct(creatorId, productId);
         applyFields(product, req.name(), req.pricePence(), req.heroImage(),
                 req.pieceStory(), req.materials(), req.dimensions(), req.care(), req.weightGrams(),
-                req.compareAtPricePence());
+                req.compareAtPricePence(), req.unitsAvailable());
         return toDto(productRepository.save(product));
     }
 
@@ -272,6 +281,8 @@ public class ProductService {
                 .orElseThrow(() -> new IllegalStateException(
                         "Uken sentinel creator not seeded — check DataSeeder"));
         validateCompareAtPrice(req.compareAtPricePence(), req.pricePence());
+        boolean availableOnline = req.availableOnline() == null || req.availableOnline();
+        validateWeightForOnlineListing(availableOnline, req.weightGrams());
         String slug = generateSlug(req.name());
         Product product = Product.builder()
                 .id(slug).creator(ukena).name(req.name())
@@ -281,6 +292,8 @@ public class ProductService {
                 .dimensions(req.dimensions()).care(req.care())
                 .weightGrams(req.weightGrams())
                 .compareAtPricePence(req.compareAtPricePence())
+                .unitsAvailable(req.unitsAvailable())
+                .availableOnline(availableOnline)
                 .status(ProductStatus.ACTIVE)
                 .isUkenaOwned(true)
                 .build();
@@ -295,10 +308,25 @@ public class ProductService {
                 .orElseThrow(() -> ApiException.notFound("Product not found"));
         if (!product.isUkenaOwned())
             throw ApiException.forbidden("Product is not a Uken catalogue item");
+        boolean availableOnline = req.availableOnline() == null || req.availableOnline();
+        Integer effectiveWeight = req.weightGrams() != null ? req.weightGrams() : product.getWeightGrams();
+        validateWeightForOnlineListing(availableOnline, effectiveWeight);
         applyFields(product, req.name(), req.pricePence(), req.heroImage(),
                 req.pieceStory(), req.materials(), req.dimensions(), req.care(), req.weightGrams(),
-                req.compareAtPricePence());
+                req.compareAtPricePence(), req.unitsAvailable());
+        product.setAvailableOnline(availableOnline);
         return toDto(productRepository.save(product));
+    }
+
+    /** Shipping needs a real weight, so anything listed online must have one. Market-only
+     *  pieces (availableOnline = false) are exempt since they'll only ever be handed over
+     *  in person. */
+    private void validateWeightForOnlineListing(boolean availableOnline, Integer weightGrams) {
+        if (availableOnline && weightGrams == null) {
+            throw ApiException.badRequest(
+                    "Add the estimated weight per unit — it's required for anything listed online " +
+                    "(used to calculate shipping). Turn off \"Also list online\" if this piece is market-only.");
+        }
     }
 
     // ── Images ───────────────────────────────────────────────
@@ -388,7 +416,8 @@ public class ProductService {
     private void applyFields(Product p, String name, int pricePence,
                               String heroImage, String pieceStory,
                               List<String> materials, String dimensions, String care,
-                              Integer weightGrams, Integer compareAtPricePence) {
+                              Integer weightGrams, Integer compareAtPricePence,
+                              Integer unitsAvailable) {
         p.setName(name);
         p.setPricePence(pricePence);
         if (heroImage != null) {
@@ -409,6 +438,29 @@ public class ProductService {
             // 0 explicitly clears/ends the markdown; a positive value sets/replaces it.
             p.setCompareAtPricePence(compareAtPricePence == 0 ? null : compareAtPricePence);
         }
+        // Null means "leave stock tracking as-is" — there's no way to explicitly revert
+        // to untracked once set, since 0 is a genuine "sold out" value, not a sentinel.
+        if (unitsAvailable != null) p.setUnitsAvailable(unitsAvailable);
+    }
+
+    /** Atomic stock decrement on payment confirmation. No-op (returns true) for
+     *  untracked products. Flips ACTIVE -> OUT_OF_STOCK when the count hits zero —
+     *  never touches a status a human already set (suspended, draft-like states). */
+    @Transactional
+    public boolean decrementStock(String productId, int qty) {
+        Product product = productRepository.findActiveById(productId).orElse(null);
+        if (product == null) return false;
+        if (product.getUnitsAvailable() == null) return true; // untracked — always allowed
+
+        int updated = productRepository.decrementStock(productId, qty);
+        if (updated == 0) return false; // insufficient tracked stock
+
+        Product refreshed = productRepository.findActiveById(productId).orElseThrow();
+        if (refreshed.getUnitsAvailable() == 0 && refreshed.getStatus() == ProductStatus.ACTIVE) {
+            refreshed.setStatus(ProductStatus.OUT_OF_STOCK);
+            productRepository.save(refreshed);
+        }
+        return true;
     }
 
     private void purgeImages(Product product) {
@@ -475,10 +527,10 @@ public class ProductService {
                 p.getId(), p.getName(), p.getPricePence(), p.getCompareAtPricePence(), hero, images,
                 p.getPieceStory(),
                 parseList(p.getMaterials(), new TypeReference<>() {}),
-                p.getDimensions(), p.getCare(), p.getWeightGrams(), p.getStatus().name(),
+                p.getDimensions(), p.getCare(), p.getWeightGrams(), p.getUnitsAvailable(), p.getStatus().name(),
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
                         c.getRegion(), c.getCraft(), c.getPortraitImage()),
-                p.isUkenaOwned(),
+                p.isUkenaOwned(), p.isAvailableOnline(),
                 avgRating, (int) reviewCount, unitsSold,
                 p.getDeletedAt() != null, p.getDeletedAt(), p.isImagesPurged());
     }

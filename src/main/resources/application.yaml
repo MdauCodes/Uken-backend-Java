@@ -133,6 +133,10 @@ ukena:
     webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
     callback-url: ${FRONTEND_URL:http://localhost:5173}/checkout/confirmation
     cancel-url: ${FRONTEND_URL:http://localhost:5173}/checkout
+    terminal:
+      # Set once the physical reader (WisePOS E / Stripe Reader S700) is registered
+      # to a Location in the Stripe Dashboard — its id looks like "tmr_...".
+      reader-id: ${STRIPE_TERMINAL_READER_ID:}
 
   paystack:
     secret-key: ${PAYSTACK_SECRET_KEY:}

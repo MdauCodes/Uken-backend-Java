@@ -15,9 +15,13 @@ public record ProductDto(
         String dimensions,
         String care,
         Integer weightGrams,
+        /** Null = untracked/unlimited stock. Never fabricated — reflects the real counter. */
+        Integer unitsAvailable,
         String status,
         ProductCreatorDto creator,
         boolean isUkenaOwned,
+        /** False = market-stall only, hidden from the public shop/catalogue/search. */
+        boolean availableOnline,
         /** Null when the product has no published reviews yet. */
         Double averageRating,
         int reviewCount,

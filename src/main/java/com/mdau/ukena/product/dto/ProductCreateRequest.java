@@ -13,5 +13,7 @@ public record ProductCreateRequest(
         String care,
         @NotNull @Min(1) @Max(50_000) Integer weightGrams,
         /** Genuine "was" price for a real markdown — must exceed pricePence. Optional, rarely set at creation. */
-        @Min(1) @Max(10_000_000) Integer compareAtPricePence
+        @Min(1) @Max(10_000_000) Integer compareAtPricePence,
+        /** Null = don't track stock for this piece (unlimited). Positive = starting count. */
+        @Min(0) Integer unitsAvailable
 ) {}

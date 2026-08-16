@@ -8,6 +8,7 @@ import com.mdau.ukena.order.Order;
 import com.mdau.ukena.order.OrderItem;
 import com.mdau.ukena.order.OrderRepository;
 import com.mdau.ukena.order.OrderStatus;
+import com.mdau.ukena.pos.StripeTerminalService;
 import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.UserRepository;
@@ -35,6 +36,8 @@ public class PaymentService {
     private final UserRepository           userRepository;
     private final EmailService             emailService;
     private final ObjectMapper             objectMapper;
+    private final ProductService           productService;
+    private final StripeTerminalService    stripeTerminalService;
 
     @Value("${ukena.payment.commission-rate:0.40}")
     private BigDecimal commissionRate;
@@ -79,31 +82,50 @@ public class PaymentService {
     }
 
     private void handleStripeWebhook(String payload, String signature) {
-        if (!paymentGateway.verifyWebhookSignature(payload, signature)) {
+        // POS (Terminal) always needs real Stripe verification even when the *online*
+        // gateway is configured as Paystack — paymentGateway may be a PaystackGateway
+        // bean in that case, so fall back to an independent Stripe check.
+        boolean verified = paymentGateway.verifyWebhookSignature(payload, signature)
+                || stripeTerminalService.verifyWebhookSignature(payload, signature);
+        if (!verified) {
             log.warn("Stripe webhook signature invalid - ignoring");
             return;
         }
         try {
-            JsonNode node    = objectMapper.readTree(payload);
-            String   event   = node.path("type").asText();
+            JsonNode node  = objectMapper.readTree(payload);
+            String   event = node.path("type").asText();
             log.info("Stripe webhook event: {}", event);
-            if (!"checkout.session.completed".equalsIgnoreCase(event)) return;
 
-            String sessionId = node.path("data").path("object").path("id").asText();
-            String displayId = node.path("data").path("object")
-                    .path("client_reference_id").asText();
-            String status    = node.path("data").path("object")
-                    .path("payment_status").asText();
+            if ("checkout.session.completed".equalsIgnoreCase(event)) {
+                String sessionId = node.path("data").path("object").path("id").asText();
+                String displayId = node.path("data").path("object")
+                        .path("client_reference_id").asText();
+                String status    = node.path("data").path("object")
+                        .path("payment_status").asText();
+                if (!"paid".equalsIgnoreCase(status)) return;
 
-            if (!"paid".equalsIgnoreCase(status)) return;
+                orderRepository.findByDisplayId(displayId).ifPresentOrElse(
+                        order -> {
+                            if (order.getStatus() == OrderStatus.PAID) return;
+                            markOrderPaid(order, sessionId);
+                        },
+                        () -> log.warn("Stripe: order not found displayId={}", displayId));
 
-            orderRepository.findByDisplayId(displayId).ifPresentOrElse(
-                    order -> {
-                        if (order.getStatus() == OrderStatus.PAID) return;
-                        markOrderPaid(order, sessionId);
-                    },
-                    () -> log.warn("Stripe: order not found displayId={}", displayId));
+            } else if ("payment_intent.succeeded".equalsIgnoreCase(event)) {
+                // POS (Terminal, server-driven) completion — online Checkout payments
+                // complete via checkout.session.completed above, so this only fires
+                // for POS PaymentIntents, which carry display_id in their own metadata.
+                String paymentIntentId = node.path("data").path("object").path("id").asText();
+                String displayId = node.path("data").path("object")
+                        .path("metadata").path("display_id").asText();
 
+                orderRepository.findByDisplayId(displayId).ifPresentOrElse(
+                        order -> {
+                            if (order.getStatus() == OrderStatus.PAID) return;
+                            markOrderPaid(order, paymentIntentId);
+                        },
+                        () -> log.warn("Stripe: POS order not found displayId={}", displayId));
+            }
         } catch (Exception e) {
             log.error("Stripe webhook parse error", e);
         }
@@ -148,6 +170,13 @@ public class PaymentService {
         order.setGatewayRef(gatewayRef);
         order.setPaidAt(Instant.now());
         orderRepository.save(order);
+
+        for (OrderItem item : order.getItems()) {
+            if (item.getProduct() == null) continue;
+            boolean ok = productService.decrementStock(item.getProduct().getId(), item.getQuantity());
+            if (!ok) log.warn("Stock decrement failed for product={} order={} — sold past tracked stock",
+                    item.getProduct().getId(), order.getDisplayId());
+        }
 
         creditLedger(order);
 

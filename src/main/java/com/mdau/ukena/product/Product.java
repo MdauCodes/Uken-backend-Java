@@ -66,6 +66,13 @@ public class Product {
     @Column(name = "weight_grams")
     private Integer weightGrams;
 
+    /** Units currently in stock. Null = untracked/unlimited (the default for every
+     *  product created before this feature, and for anyone who opts out of stock
+     *  tracking) — never treated as zero. Decremented atomically on payment
+     *  confirmation; see ProductRepository.decrementStock. */
+    @Column(name = "units_available")
+    private Integer unitsAvailable;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     @Builder.Default
@@ -87,6 +94,14 @@ public class Product {
     @Column(name = "is_ukena_owned", nullable = false)
     @Builder.Default
     private boolean isUkenaOwned = false;
+
+    /** False = market-stall only — excluded from the public shop/catalogue/search
+     *  and direct product-page access, but still fully sellable via POS. True (the
+     *  default, matching every product created before this feature) means listed
+     *  everywhere as normal. */
+    @Column(name = "available_online", nullable = false)
+    @Builder.Default
+    private boolean availableOnline = true;
 
     @Column(name = "deleted_at")
     private Instant deletedAt;

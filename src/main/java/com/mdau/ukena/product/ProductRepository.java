@@ -15,6 +15,7 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
         AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
         AND (:creatorId IS NULL OR p.creator.id = :creatorId)
         AND (:minPrice IS NULL OR p.pricePence >= :minPrice)
         AND (:maxPrice IS NULL OR p.pricePence <= :maxPrice)
@@ -25,6 +26,17 @@ public interface ProductRepository extends JpaRepository<Product, String> {
             @Param("minPrice")  Integer minPrice,
             @Param("maxPrice")  Integer maxPrice,
             Pageable pageable);
+
+    /** POS browse grid — Uken's own catalogue only, ACTIVE only, but deliberately
+     *  ignores availableOnline: market-only pieces must still be sellable at the stall. */
+    @Query("""
+        SELECT p FROM Product p
+        WHERE p.deletedAt IS NULL
+        AND p.creator.id = :creatorId
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        ORDER BY p.name ASC
+    """)
+    List<Product> browseForPos(@Param("creatorId") String creatorId);
 
     @Query("""
         SELECT p FROM Product p
@@ -66,6 +78,7 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         JOIN FETCH p.creator c
         WHERE p.deletedAt IS NULL
         AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
         AND (LOWER(p.name)       LIKE LOWER(CONCAT('%', :q, '%')) OR
              LOWER(p.pieceStory) LIKE LOWER(CONCAT('%', :q, '%')) OR
              LOWER(c.craft)      LIKE LOWER(CONCAT('%', :q, '%')))
@@ -98,6 +111,16 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         AND p.deletedAt IS NULL
     """)
     List<Product> findByCreatorId(@Param("creatorId") String creatorId);
+
+    /** Atomic — only decrements when enough tracked stock exists. Returns affected row
+     *  count: 0 means either untracked (unitsAvailable IS NULL) or insufficient stock,
+     *  both of which the caller must handle without assuming the decrement happened. */
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.unitsAvailable = p.unitsAvailable - :qty
+        WHERE p.id = :id AND p.unitsAvailable IS NOT NULL AND p.unitsAvailable >= :qty
+    """)
+    int decrementStock(@Param("id") String id, @Param("qty") int qty);
 
     /** Active, creator-owned (not Uken catalogue) products still missing a weight —
      *  the pool the weight-reminder email is sent for. */

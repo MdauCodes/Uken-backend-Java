@@ -45,6 +45,13 @@ public class Order {
     @Builder.Default
     private OrderStatus status = OrderStatus.PENDING;
 
+    /** Nullable — added after online-only orders already existed. Null reads as
+     *  ONLINE everywhere it's surfaced (see OrderService.toDto); every order placed
+     *  from here on sets it explicitly (place() -> ONLINE, placePos() -> POS). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private OrderChannel channel;
+
     @Column(name = "shipping_pence", nullable = false)
     @Builder.Default
     private int shippingPence = 0;

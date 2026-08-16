@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
@@ -60,6 +61,10 @@ public class OrderService {
                         product.getStatus() == ProductStatus.OUT_OF_STOCK
                                 ? product.getName() + " is currently out of stock"
                                 : product.getName() + " is not available for purchase");
+            }
+            if (product.getUnitsAvailable() != null && itemReq.quantity() > product.getUnitsAvailable()) {
+                throw ApiException.badRequest(
+                        "Only " + product.getUnitsAvailable() + " of " + product.getName() + " left in stock");
             }
             Integer productWeight = product.getWeightGrams();
             int unitWeightGrams = (productWeight != null && productWeight > 0)
@@ -107,6 +112,7 @@ public class OrderService {
                 .totalPence(totalPence)
                 .delivery(toJson(req.delivery()))
                 .status(OrderStatus.PENDING)
+                .channel(OrderChannel.ONLINE)
                 .build();
 
         items.forEach(item -> item.setOrder(order));
@@ -122,6 +128,71 @@ public class OrderService {
 //                saved.getBuyerEmail(), saved.getBuyerFullName(), saved.getDisplayId());
 
         return toDto(saved);
+    }
+
+    /** Market-stall sale — a walk-out handover, not a shipment. Deliberately skips
+     *  the delivery zone / shipping calc that place() requires: no delivery zone,
+     *  no shipping fee, a synthetic delivery marker (Order.delivery is NOT NULL but
+     *  nothing here needs a real address). Stock/status validation mirrors place(). */
+    @Transactional
+    public OrderDto placePos(List<OrderItemRequest> itemRequests, String customerEmail, String customerFullName) {
+        if (itemRequests == null || itemRequests.isEmpty())
+            throw ApiException.badRequest("Cart is empty");
+
+        List<OrderItem> items = itemRequests.stream().map(itemReq -> {
+            Product product = productRepository.findActiveById(itemReq.productId())
+                    .orElseThrow(() -> ApiException.notFound("Product not found: " + itemReq.productId()));
+            if (product.getStatus() != ProductStatus.ACTIVE) {
+                throw ApiException.badRequest(
+                        product.getStatus() == ProductStatus.OUT_OF_STOCK
+                                ? product.getName() + " is currently out of stock"
+                                : product.getName() + " is not available for purchase");
+            }
+            if (product.getUnitsAvailable() != null && itemReq.quantity() > product.getUnitsAvailable()) {
+                throw ApiException.badRequest(
+                        "Only " + product.getUnitsAvailable() + " of " + product.getName() + " left in stock");
+            }
+            return OrderItem.builder()
+                    .product(product)
+                    .creator(product.getCreator())
+                    .productName(product.getName())
+                    .quantity(itemReq.quantity())
+                    .pricePence(product.getPricePence())
+                    .weightGrams(product.getWeightGrams())
+                    .image(product.getHeroImage())
+                    .creatorFullName(product.getCreator().getFullName())
+                    .creatorRegion(product.getCreator().getRegion())
+                    .build();
+        }).toList();
+
+        int totalPence = items.stream().mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
+
+        Order order = Order.builder()
+                .displayId(generateDisplayId())
+                .buyer(null)
+                .buyerFullName(customerFullName != null && !customerFullName.isBlank()
+                        ? customerFullName.trim() : "Walk-in customer")
+                .buyerEmail(customerEmail != null && !customerEmail.isBlank()
+                        ? customerEmail.toLowerCase().trim() : "walk-in@ukena.co.uk")
+                .shippingPence(0)
+                .deliveryZoneId(null)
+                .totalPence(totalPence)
+                .delivery(toJson(Map.of("channel", "POS")))
+                .status(OrderStatus.PENDING)
+                .channel(OrderChannel.POS)
+                .build();
+
+        items.forEach(item -> item.setOrder(order));
+        order.getItems().addAll(items);
+        Order saved = orderRepository.save(order);
+        return toDto(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public OrderDto getByDisplayId(String displayId) {
+        return orderRepository.findByDisplayId(displayId)
+                .map(this::toDto)
+                .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
     }
 
     @Transactional(readOnly = true)
@@ -234,6 +305,7 @@ public class OrderService {
         ).toList();
         return new OrderDto(
                 o.getDisplayId(), o.getCreatedAt(), o.getStatus().name(),
+                o.getChannel() != null ? o.getChannel().name() : OrderChannel.ONLINE.name(),
                 productsTotalPence, o.getShippingPence(),
                 o.getPromoCode(), o.getDiscountPence() != null ? o.getDiscountPence() : 0,
                 o.getTotalPence(),

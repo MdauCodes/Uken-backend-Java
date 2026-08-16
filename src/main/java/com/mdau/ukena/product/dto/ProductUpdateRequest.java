@@ -16,5 +16,8 @@ public record ProductUpdateRequest(
         @Min(1) @Max(50_000) Integer weightGrams,
         /** Genuine "was" price for a real markdown — must exceed pricePence. Null = leave
          *  unchanged; 0 = explicitly clear/end the markdown; positive = set/replace it. */
-        @Min(0) @Max(10_000_000) Integer compareAtPricePence
+        @Min(0) @Max(10_000_000) Integer compareAtPricePence,
+        /** Null here means "leave as-is" (not "untrack") — applyFields only overwrites
+         *  unitsAvailable when a value is actually sent. Use 0 to mean genuinely zero. */
+        @Min(0) Integer unitsAvailable
 ) {}
