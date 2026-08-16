@@ -81,14 +81,18 @@ public class EmailTemplateSeeder implements ApplicationRunner {
     private static final List<Seed> SEEDS = List.of(
 
         // ── Pitch ──────────────────────────────────────────────────────
+        // No sign-off baked in below — the per-mailbox signature (name, title,
+        // contact) is appended automatically at send time (see emailLetterhead.ts
+        // signatureBlock). A hardcoded "Warmly, The UKEN team" here would just
+        // duplicate it once a mailbox has one configured.
         new Seed("Pitch — General introduction", "PITCH", SALES,
             p(
                 "Hi [Name],",
-                "UKEN brings you handcrafted goods made by artisans and farmers across Kenya and the UK " +
-                    "— each piece carries a story, a region, and a maker's name behind it.",
-                "We'd love for you to see what's on the shelf right now: beadwork, textiles, home pieces, " +
-                    "and more, each one made by hand.",
-                "Warmly,<br>The UKEN team"
+                "UKEN brings you handcrafted goods and produce from independent artisans and farmers " +
+                    "across Kenya, Uganda, Tanzania, Rwanda and beyond — each piece carries a story, a " +
+                    "region, and a maker's name behind it.",
+                "We'd love for you to see what's on the shelf right now: coffee, tea, beadwork, textiles, " +
+                    "home pieces, and more, every one traceable back to who made or grew it."
             ),
             "Browse the collection", SHOP_URL),
 
@@ -98,8 +102,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "<strong>Just added</strong> — new pieces from this season's makers.",
                 "Every item is made to order or in small batches — once a run sells out, it's gone. " +
                     "Here's your first look before the rest of the list gets it.",
-                "Free from the middleman markup — prices go straight back to the person who made it.",
-                "Warmly,<br>The UKEN team"
+                "Free from the middleman markup — prices go straight back to the person who made it."
             ),
             "Shop the new arrivals", SHOP_URL),
 
@@ -109,8 +112,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Hi [Name],",
                 "Thanks for reaching out to UKEN — happy to help.",
                 "[Your reply here]",
-                "If anything else comes up, just reply to this email — a real person reads every message.",
-                "Best,<br>[Your name]<br>UKEN"
+                "If anything else comes up, just reply to this email — a real person reads every message."
             ),
             null, null),
 
@@ -119,8 +121,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Hi [Name],",
                 "Thanks for getting in touch about order <strong>#[Order number]</strong>.",
                 "[Order status / resolution details here]",
-                "You can track this order any time at the link below.",
-                "Best,<br>[Your name]<br>UKEN"
+                "You can track this order any time at the link below."
             ),
             "Track your order", "https://ukena.co.uk/orders/track"),
 
@@ -130,8 +131,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Thanks for your interest in working with UKEN — we're always glad to hear from people " +
                     "who want to bring these pieces to a wider audience.",
                 "[Details on wholesale terms / next steps here]",
-                "Let me know if you'd like to set up a call to go through the details.",
-                "Best,<br>[Your name]<br>UKEN"
+                "Let me know if you'd like to set up a call to go through the details."
             ),
             null, null),
 
@@ -143,8 +143,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "A few things to do before your first listing goes live: add clear photos, fill in the " +
                     "story behind each piece, and set the weight per unit so shipping calculates correctly " +
                     "at checkout.",
-                "Reach out any time if something's unclear — we're rooting for you.",
-                "Warmly,<br>The UKEN team"
+                "Reach out any time if something's unclear — we're rooting for you."
             ),
             "Open your Maker Studio", "https://ukena.co.uk/creator"),
 
@@ -154,8 +153,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Quick note on <strong>[Product name]</strong> — [what's missing: weight / photos / " +
                     "description, etc.] still needs to be filled in before it can go live for buyers.",
                 "It only takes a couple of minutes to update from your dashboard.",
-                "Let us know if you'd like a hand with it.",
-                "Best,<br>The UKEN team"
+                "Let us know if you'd like a hand with it."
             ),
             "Update your listing", "https://ukena.co.uk/creator/products"),
 
@@ -165,8 +163,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Good news — a payout of <strong>[Amount]</strong> for your recent sales has been sent " +
                     "and should reach you within [timeframe].",
                 "You can see the full breakdown any time in your earnings dashboard.",
-                "Thank you for the work you put into every piece — it shows.",
-                "Warmly,<br>The UKEN team"
+                "Thank you for the work you put into every piece — it shows."
             ),
             "View your earnings", "https://ukena.co.uk/creator/earnings")
     );
