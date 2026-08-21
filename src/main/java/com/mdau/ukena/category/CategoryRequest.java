@@ -13,5 +13,6 @@ public record CategoryRequest(
         @NotBlank @Size(max = 40) String colorToken,
         int sortOrder,
         boolean active,
-        List<String> craftValues
+        List<String> craftValues,
+        String thumbnailImage
 ) {}

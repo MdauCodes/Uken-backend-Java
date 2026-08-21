@@ -59,6 +59,11 @@ public class Category {
     @Builder.Default
     private String craftValues = "[]";
 
+    /** Representative image for the category showcase section — nullable,
+     *  admin-editable from the Categories screen. */
+    @Column(name = "thumbnail_image", columnDefinition = "TEXT")
+    private String thumbnailImage;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

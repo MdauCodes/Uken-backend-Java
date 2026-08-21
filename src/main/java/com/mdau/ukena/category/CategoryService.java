@@ -39,6 +39,7 @@ public class CategoryService {
                 .sortOrder(req.sortOrder())
                 .active(req.active())
                 .craftValues(toJson(req.craftValues()))
+                .thumbnailImage(blankToNull(req.thumbnailImage()))
                 .build();
         return toDto(repository.save(category));
     }
@@ -52,6 +53,7 @@ public class CategoryService {
         category.setSortOrder(req.sortOrder());
         category.setActive(req.active());
         category.setCraftValues(toJson(req.craftValues()));
+        category.setThumbnailImage(blankToNull(req.thumbnailImage()));
         return toDto(repository.save(category));
     }
 
@@ -65,7 +67,11 @@ public class CategoryService {
 
     CategoryDto toDto(Category c) {
         return new CategoryDto(c.getId(), c.getName(), c.getColorToken(), c.getSortOrder(),
-                c.isActive(), parseList(c.getCraftValues()));
+                c.isActive(), parseList(c.getCraftValues()), c.getThumbnailImage());
+    }
+
+    private String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private List<String> parseList(String json) {

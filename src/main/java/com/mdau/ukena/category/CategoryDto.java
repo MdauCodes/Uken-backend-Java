@@ -8,5 +8,6 @@ public record CategoryDto(
         String colorToken,
         int sortOrder,
         boolean active,
-        List<String> craftValues
+        List<String> craftValues,
+        String thumbnailImage
 ) {}
