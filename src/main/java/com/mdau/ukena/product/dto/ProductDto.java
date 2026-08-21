@@ -19,6 +19,8 @@ public record ProductDto(
         Integer unitsAvailable,
         String status,
         ProductCreatorDto creator,
+        /** Null until CategorySeeder's craft-matching backfill (or an admin) assigns one. */
+        ProductCategoryDto category,
         boolean isUkenaOwned,
         /** False = market-stall only, hidden from the public shop/catalogue/search. */
         boolean availableOnline,

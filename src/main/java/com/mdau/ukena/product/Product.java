@@ -1,5 +1,6 @@
 package com.mdau.ukena.product;
 
+import com.mdau.ukena.category.Category;
 import com.mdau.ukena.creator.Creator;
 import jakarta.persistence.*;
 import lombok.*;
@@ -17,7 +18,8 @@ import java.util.List;
         @Index(name = "idx_products_created_at",     columnList = "created_at"),
         @Index(name = "idx_products_creator_status", columnList = "creator_id,status"),
         @Index(name = "idx_products_price",          columnList = "price_pence"),
-        @Index(name = "idx_products_ukena_owned",    columnList = "is_ukena_owned")
+        @Index(name = "idx_products_ukena_owned",    columnList = "is_ukena_owned"),
+        @Index(name = "idx_products_category_id",    columnList = "category_id")
 })
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
@@ -102,6 +104,14 @@ public class Product {
     @Column(name = "available_online", nullable = false)
     @Builder.Default
     private boolean availableOnline = true;
+
+    /** Real category taxonomy (see com.mdau.ukena.category.Category) — nullable
+     *  because ddl-auto can't safely add a NOT NULL FK to a populated table
+     *  without a default, and because it genuinely can be unset until
+     *  CategorySeeder's craft-matching backfill (or an admin) assigns one. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private Category category;
 
     @Column(name = "deleted_at")
     private Instant deletedAt;

@@ -133,4 +133,16 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
     """)
     List<Product> findActiveMissingWeight();
+
+    /** Not-yet-categorized, not deleted — the pool CategorySeeder auto-assigns
+     *  on every boot by matching the creator's craft against each category's
+     *  craftValues, so newly-created products get a real category as soon as
+     *  the app restarts, without a manual admin step. */
+    @Query("""
+        SELECT p FROM Product p
+        JOIN FETCH p.creator
+        WHERE p.category IS NULL
+        AND p.deletedAt IS NULL
+    """)
+    List<Product> findUncategorizedNotDeleted();
 }

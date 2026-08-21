@@ -516,6 +516,9 @@ public class ProductService {
                 : images.stream().filter(ProductImageDto::isPrimary)
                         .findFirst().map(ProductImageDto::url).orElse(null);
         Creator c = p.getCreator();
+        var category = p.getCategory();
+        ProductCategoryDto categoryDto = category == null ? null
+                : new ProductCategoryDto(category.getId(), category.getName(), category.getColorToken());
 
         List<Object[]> ratingRows = reviewRepository.ratingSummary(p.getId());
         Object[] ratingRow = ratingRows.isEmpty() ? null : ratingRows.get(0);
@@ -530,6 +533,7 @@ public class ProductService {
                 p.getDimensions(), p.getCare(), p.getWeightGrams(), p.getUnitsAvailable(), p.getStatus().name(),
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
                         c.getRegion(), c.getCraft(), c.getPortraitImage()),
+                categoryDto,
                 p.isUkenaOwned(), p.isAvailableOnline(),
                 avgRating, (int) reviewCount, unitsSold,
                 p.getDeletedAt() != null, p.getDeletedAt(), p.isImagesPurged());
