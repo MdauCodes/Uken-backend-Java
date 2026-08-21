@@ -18,26 +18,26 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
      *  suspended) without having anything a buyer could actually see, and the
      *  trust-strip stat this powers must never count someone who isn't really
      *  represented on the live site. */
-    // Queried FROM Product (the side that actually holds the @ManyToOne
-    // creator field) and navigated into creator via plain dot-path — the
-    // same unambiguous pattern ProductRepository.search() already uses
-    // successfully — rather than correlating Creator back to Product, which
-    // twice produced a query that silently matched zero rows in production
-    // despite obviously-matching data.
-    @Query("""
-        SELECT COUNT(DISTINCT p.creator) FROM Product p
-        WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-        AND p.availableOnline = true
-        AND p.creator.id <> 'ukena' AND p.creator.deletedAt IS NULL
-    """)
+    // Three different JPQL formulations (correlated JOIN, EXISTS subquery,
+    // querying from Product with dot-path navigation) all silently matched
+    // zero rows in production despite verified-correct underlying data —
+    // switched to native SQL against the real column names to eliminate any
+    // JPQL-to-SQL translation ambiguity, matching findFiltered/
+    // findAllForAdmin below, which already use native SQL in this file.
+    @Query(value = """
+        SELECT COUNT(DISTINCT p.creator_id) FROM products p
+        JOIN creators c ON c.id = p.creator_id
+        WHERE p.deleted_at IS NULL AND p.status = 'ACTIVE' AND p.available_online = true
+        AND c.id <> 'ukena' AND c.deleted_at IS NULL
+    """, nativeQuery = true)
     long countActiveMakers();
 
-    @Query("""
-        SELECT COUNT(DISTINCT p.creator.region) FROM Product p
-        WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-        AND p.availableOnline = true
-        AND p.creator.id <> 'ukena' AND p.creator.deletedAt IS NULL
-    """)
+    @Query(value = """
+        SELECT COUNT(DISTINCT c.region) FROM products p
+        JOIN creators c ON c.id = p.creator_id
+        WHERE p.deleted_at IS NULL AND p.status = 'ACTIVE' AND p.available_online = true
+        AND c.id <> 'ukena' AND c.deleted_at IS NULL
+    """, nativeQuery = true)
     long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
            "AND (:craft IS NULL OR LOWER(craft) = LOWER(CAST(:craft AS varchar))) " +
