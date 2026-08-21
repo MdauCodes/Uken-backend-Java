@@ -18,27 +18,25 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
      *  suspended) without having anything a buyer could actually see, and the
      *  trust-strip stat this powers must never count someone who isn't really
      *  represented on the live site. */
+    // Queried FROM Product (the side that actually holds the @ManyToOne
+    // creator field) and navigated into creator via plain dot-path — the
+    // same unambiguous pattern ProductRepository.search() already uses
+    // successfully — rather than correlating Creator back to Product, which
+    // twice produced a query that silently matched zero rows in production
+    // despite obviously-matching data.
     @Query("""
-        SELECT COUNT(c) FROM Creator c
-        WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
-        AND EXISTS (
-            SELECT 1 FROM Product p
-            WHERE p.creator = c AND p.deletedAt IS NULL
-            AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-            AND p.availableOnline = true
-        )
+        SELECT COUNT(DISTINCT p.creator) FROM Product p
+        WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
+        AND p.creator.id <> 'ukena' AND p.creator.deletedAt IS NULL
     """)
     long countActiveMakers();
 
     @Query("""
-        SELECT COUNT(DISTINCT c.region) FROM Creator c
-        WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
-        AND EXISTS (
-            SELECT 1 FROM Product p
-            WHERE p.creator = c AND p.deletedAt IS NULL
-            AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-            AND p.availableOnline = true
-        )
+        SELECT COUNT(DISTINCT p.creator.region) FROM Product p
+        WHERE p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
+        AND p.creator.id <> 'ukena' AND p.creator.deletedAt IS NULL
     """)
     long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
