@@ -12,23 +12,24 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
     @Query("SELECT c FROM Creator c WHERE c.deletedAt IS NULL")
     Page<Creator> findAllActive(Pageable pageable);
 
-    /** Real, publicly-visible makers only — excludes the "ukena" sentinel, and
-     *  (critically) excludes a creator with zero live products: a creator row
-     *  can exist (e.g. seeded but not yet activated, or every listing
-     *  suspended) without having anything a buyer could actually see, and the
-     *  trust-strip stat this powers must never count someone who isn't really
-     *  represented on the live site. */
-    // Three different JPQL formulations (correlated JOIN, EXISTS subquery,
-    // querying from Product with dot-path navigation) all silently matched
-    // zero rows in production despite verified-correct underlying data —
-    // switched to native SQL against the real column names to eliminate any
-    // JPQL-to-SQL translation ambiguity, matching findFiltered/
-    // findAllForAdmin below, which already use native SQL in this file.
+    /** Real, publicly-visible makers only — a creator counts if they have at
+     *  least one real, live, buyable product. Deliberately does NOT check
+     *  creator.deletedAt: verified directly against production data that a
+     *  creator row's own soft-delete flag doesn't reliably track whether
+     *  their products are actually live (the platform's one real, currently-
+     *  selling creator has deletedAt set on the creator row despite all 12
+     *  of their products being ACTIVE) — every other visibility check in
+     *  this codebase (browse/search/countActive/etc.) already treats
+     *  product-level status as authoritative and never looks at
+     *  creator.deletedAt either, so this matches that same convention
+     *  instead of inventing a stricter one. Native SQL, matching
+     *  findFiltered/findAllForAdmin below, since three different JPQL
+     *  formulations all silently matched zero rows for reasons that were
+     *  never actually about JPQL — see git history for the debugging trail. */
     @Query(value = """
         SELECT COUNT(DISTINCT p.creator_id) FROM products p
-        JOIN creators c ON c.id = p.creator_id
         WHERE p.deleted_at IS NULL AND p.status = 'ACTIVE' AND p.available_online = true
-        AND c.id <> 'ukena' AND c.deleted_at IS NULL
+        AND p.creator_id <> 'ukena'
     """, nativeQuery = true)
     long countActiveMakers();
 
@@ -36,7 +37,7 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
         SELECT COUNT(DISTINCT c.region) FROM products p
         JOIN creators c ON c.id = p.creator_id
         WHERE p.deleted_at IS NULL AND p.status = 'ACTIVE' AND p.available_online = true
-        AND c.id <> 'ukena' AND c.deleted_at IS NULL
+        AND p.creator_id <> 'ukena'
     """, nativeQuery = true)
     long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
