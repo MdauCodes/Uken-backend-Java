@@ -9,6 +9,7 @@ import com.mdau.ukena.order.dto.*;
 import com.mdau.ukena.product.Product;
 import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.product.ProductStatus;
+import com.mdau.ukena.product.dto.ProductCategoryDto;
 import com.mdau.ukena.promo.PromoCode;
 import com.mdau.ukena.promo.PromoCodeService;
 import com.mdau.ukena.shipping.ShippingSettings;
@@ -301,7 +302,13 @@ public class OrderService {
                         i.getImage(),
                         new OrderItemCreatorDto(
                                 i.getCreator() != null ? i.getCreator().getId() : null,
-                                i.getCreatorFullName(), i.getCreatorRegion()))
+                                i.getCreatorFullName(), i.getCreatorRegion()),
+                        i.getProduct() != null && i.getProduct().getCategory() != null
+                                ? new ProductCategoryDto(
+                                        i.getProduct().getCategory().getId(),
+                                        i.getProduct().getCategory().getName(),
+                                        i.getProduct().getCategory().getColorToken())
+                                : null)
         ).toList();
         return new OrderDto(
                 o.getDisplayId(), o.getCreatedAt(), o.getStatus().name(),
