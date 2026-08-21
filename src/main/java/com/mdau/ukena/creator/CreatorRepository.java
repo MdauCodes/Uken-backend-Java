@@ -12,11 +12,28 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
     @Query("SELECT c FROM Creator c WHERE c.deletedAt IS NULL")
     Page<Creator> findAllActive(Pageable pageable);
 
-    /** Real makers only — excludes the "ukena" sentinel used for the in-house catalogue. */
-    @Query("SELECT COUNT(c) FROM Creator c WHERE c.deletedAt IS NULL AND c.id <> 'ukena'")
+    /** Real, publicly-visible makers only — excludes the "ukena" sentinel, and
+     *  (critically) excludes a creator with zero live products: a creator row
+     *  can exist (e.g. seeded but not yet activated, or every listing
+     *  suspended) without having anything a buyer could actually see, and the
+     *  trust-strip stat this powers must never count someone who isn't really
+     *  represented on the live site. */
+    @Query("""
+        SELECT COUNT(DISTINCT c) FROM Creator c
+        JOIN Product p ON p.creator = c
+        WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
+        AND p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
+    """)
     long countActiveMakers();
 
-    @Query("SELECT COUNT(DISTINCT c.region) FROM Creator c WHERE c.deletedAt IS NULL AND c.id <> 'ukena'")
+    @Query("""
+        SELECT COUNT(DISTINCT c.region) FROM Creator c
+        JOIN Product p ON p.creator = c
+        WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
+        AND p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND p.availableOnline = true
+    """)
     long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
            "AND (:craft IS NULL OR LOWER(craft) = LOWER(CAST(:craft AS varchar))) " +
