@@ -2,8 +2,10 @@ package com.mdau.ukena.payment;
 
 /**
  * Payment gateway abstraction.
- * Implementations: PesapalGateway (primary), FlutterwaveGateway (fallback).
- * Switch via: ukena.payment.provider = pesapal | flutterwave
+ * Implementations: StripeGateway (default), PaystackGateway.
+ * Switch via: ukena.payment.provider = stripe | paystack — see PaymentGatewayConfig.
+ * (application.yaml also carries unused pesapal/flutterwave config blocks —
+ * no PaymentGateway implementation exists for either provider.)
  */
 public interface PaymentGateway {
 
