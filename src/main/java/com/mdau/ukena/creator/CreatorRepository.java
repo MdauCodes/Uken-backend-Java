@@ -19,20 +19,26 @@ public interface CreatorRepository extends JpaRepository<Creator, String> {
      *  trust-strip stat this powers must never count someone who isn't really
      *  represented on the live site. */
     @Query("""
-        SELECT COUNT(DISTINCT c) FROM Creator c
-        JOIN Product p ON p.creator = c
+        SELECT COUNT(c) FROM Creator c
         WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
-        AND p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-        AND p.availableOnline = true
+        AND EXISTS (
+            SELECT 1 FROM Product p
+            WHERE p.creator = c AND p.deletedAt IS NULL
+            AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+            AND p.availableOnline = true
+        )
     """)
     long countActiveMakers();
 
     @Query("""
         SELECT COUNT(DISTINCT c.region) FROM Creator c
-        JOIN Product p ON p.creator = c
         WHERE c.deletedAt IS NULL AND c.id <> 'ukena'
-        AND p.deletedAt IS NULL AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
-        AND p.availableOnline = true
+        AND EXISTS (
+            SELECT 1 FROM Product p
+            WHERE p.creator = c AND p.deletedAt IS NULL
+            AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+            AND p.availableOnline = true
+        )
     """)
     long countDistinctRegions();
     @Query(value = "SELECT * FROM creators WHERE deleted_at IS NULL " +
