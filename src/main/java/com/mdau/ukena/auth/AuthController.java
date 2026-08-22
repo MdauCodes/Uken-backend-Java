@@ -44,7 +44,7 @@ public class AuthController {
             @Valid @RequestBody ForgotPasswordRequest req) {
         authService.forgotPassword(req);
         return ResponseEntity.ok(ApiResponse.ok(null,
-                "If that email is registered, a reset link has been sent"));
+                "If that email is registered, a reset code has been sent"));
     }
     @PostMapping("/reset-password")
     public ResponseEntity<ApiResponse<Void>> resetPassword(

@@ -27,12 +27,16 @@ public interface EmailService {
             String email, String fullName,
             String creatorId, String tempPassword);
 
+    CompletableFuture<Boolean> sendStaffInvite(
+            String email, String fullName,
+            String role, String tempPassword);
+
     CompletableFuture<Boolean> sendPayoutConfirmation(
             String email, String fullName,
             int amountPence, String currency);
 
     CompletableFuture<Boolean> sendPasswordReset(
-            String email, String fullName, String resetLink);
+            String email, String fullName, String otp);
 
     CompletableFuture<Boolean> sendPaymentReminder(
             String email, String fullName,

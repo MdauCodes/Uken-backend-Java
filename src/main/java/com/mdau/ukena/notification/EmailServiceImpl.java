@@ -127,6 +127,22 @@ public class EmailServiceImpl implements EmailService {
 
     @Async("emailTaskExecutor")
     @Override
+    public CompletableFuture<Boolean> sendStaffInvite(
+            String email, String fullName,
+            String role, String tempPassword) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("name", fullName);
+        model.put("email", email);
+        model.put("role", role);
+        model.put("tempPassword", tempPassword);
+        model.put("loginUrl", frontendUrl + "/signin");
+        model.put("baseUrl", frontendUrl);
+        return send(email, "You've been added to Ukena",
+                "staff-invite.ftl", model);
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
     public CompletableFuture<Boolean> sendPayoutConfirmation(
             String email, String fullName,
             int amountPence, String currency) {

@@ -65,14 +65,28 @@ public class AdminService {
             role = UserRole.ROLE_ADMIN;
         }
 
+        // No password supplied — the normal path from the admin UI now, per
+        // the "just enter their email" flow: generate one and email it,
+        // same pattern ApplicationService already uses for new creators.
+        boolean generated = req.password() == null || req.password().isBlank();
+        String plainPassword = generated
+                ? "Ukena" + java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 9999) + "!"
+                : req.password();
+
         User staff = User.builder()
                 .email(req.email().toLowerCase().trim())
-                .passwordHash(passwordEncoder.encode(req.password()))
+                .passwordHash(passwordEncoder.encode(plainPassword))
                 .fullName(req.fullName().trim())
                 .role(role)
                 .build();
         userRepository.save(staff);
         log.info("{} account created: {}", role, req.email());
+        auditLogService.record(actingUser, "STAFF_CREATED", "USER", staff.getId().toString(),
+                staff.getFullName(), role + " account created" + (generated ? " (invited by email)" : ""));
+
+        if (generated) {
+            emailService.sendStaffInvite(staff.getEmail(), staff.getFullName(), role.name().replace("ROLE_", ""), plainPassword);
+        }
         return toStaffDto(staff);
     }
 
@@ -97,6 +111,8 @@ public class AdminService {
         target.setRole(UserRole.ROLE_ADMIN);
         userRepository.save(target);
         log.info("{} promoted to admin by {}", target.getEmail(), actingUser.email());
+        auditLogService.record(actingUser, "STAFF_PROMOTED", "USER", target.getId().toString(),
+                target.getFullName(), "Promoted from support to admin");
         return toStaffDto(target);
     }
 
@@ -115,6 +131,8 @@ public class AdminService {
         target.setRole(UserRole.ROLE_SUPPORT);
         userRepository.save(target);
         log.info("{} demoted to support by {}", target.getEmail(), actingUser.email());
+        auditLogService.record(actingUser, "STAFF_DEMOTED", "USER", target.getId().toString(),
+                target.getFullName(), "Demoted from admin to support");
         return toStaffDto(target);
     }
 
@@ -142,19 +160,23 @@ public class AdminService {
     }
 
     @Transactional
-    public void suspendBuyer(UUID userId) {
+    public void suspendBuyer(UUID userId, CurrentUser actingUser) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(true);
         userRepository.save(user);
+        auditLogService.record(actingUser, "BUYER_SUSPENDED", "USER", userId.toString(),
+                user.getFullName(), null);
     }
 
     @Transactional
-    public void unsuspendBuyer(UUID userId) {
+    public void unsuspendBuyer(UUID userId, CurrentUser actingUser) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         user.setSuspended(false);
         userRepository.save(user);
+        auditLogService.record(actingUser, "BUYER_UNSUSPENDED", "USER", userId.toString(),
+                user.getFullName(), null);
     }
 
     /**

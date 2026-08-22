@@ -66,14 +66,16 @@ public class AdminController {
     }
 
     @PatchMapping("/buyers/{id}/suspend")
-    public ResponseEntity<Void> suspendBuyer(@PathVariable UUID id) {
-        adminService.suspendBuyer(id);
+    public ResponseEntity<Void> suspendBuyer(
+            @PathVariable UUID id, @AuthenticationPrincipal CurrentUser currentUser) {
+        adminService.suspendBuyer(id, currentUser);
         return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/buyers/{id}/unsuspend")
-    public ResponseEntity<Void> unsuspendBuyer(@PathVariable UUID id) {
-        adminService.unsuspendBuyer(id);
+    public ResponseEntity<Void> unsuspendBuyer(
+            @PathVariable UUID id, @AuthenticationPrincipal CurrentUser currentUser) {
+        adminService.unsuspendBuyer(id, currentUser);
         return ResponseEntity.noContent().build();
     }
 

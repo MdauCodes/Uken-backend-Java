@@ -532,7 +532,7 @@ public class ProductService {
                 parseList(p.getMaterials(), new TypeReference<>() {}),
                 p.getDimensions(), p.getCare(), p.getWeightGrams(), p.getUnitsAvailable(), p.getStatus().name(),
                 new ProductCreatorDto(c.getId(), c.getFirstName(), c.getFullName(),
-                        c.getRegion(), c.getCraft(), c.getPortraitImage()),
+                        c.getRegion(), c.getCraft(), c.getPortraitImage(), c.isDeleted()),
                 categoryDto,
                 p.isUkenaOwned(), p.isAvailableOnline(),
                 avgRating, (int) reviewCount, unitsSold,
