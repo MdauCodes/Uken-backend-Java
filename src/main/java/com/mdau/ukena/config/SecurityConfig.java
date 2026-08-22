@@ -90,8 +90,6 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/promo-codes/validate").permitAll()
                 .requestMatchers(HttpMethod.GET, "/promo-codes/status").permitAll()
                 .requestMatchers(HttpMethod.POST, "/promo-codes/welcome-capture").permitAll()
-                    .requestMatchers(HttpMethod.GET, "/orders/track-by-email").permitAll()
-
                 .requestMatchers(
                         "/actuator/health",
                         "/v3/api-docs/**",
