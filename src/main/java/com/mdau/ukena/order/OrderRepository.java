@@ -38,9 +38,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     List<Order> findPendingOrdersForReminder(@Param("cutoff") Instant cutoff);
 
-
-    List<Order> findByBuyerEmailIgnoreCaseOrderByCreatedAtDesc(String email);
-
     @Query("SELECT COUNT(o) FROM Order o WHERE o.status = com.mdau.ukena.order.OrderStatus.PAID")
     long countPaidOrders();
 }

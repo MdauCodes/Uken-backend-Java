@@ -110,11 +110,4 @@ public class OrderController {
         return ResponseEntity.ok(ApiResponse.ok(
                 orderService.adminBulkUpdateStatus(req)));
     }
-
-    @GetMapping("/orders/track-by-email")
-    public ResponseEntity<ApiResponse<List<OrderDto>>> trackByEmail(
-            @RequestParam String email) {
-        return ResponseEntity.ok(ApiResponse.ok(
-                orderService.trackByEmail(email)));
-    }
 }
