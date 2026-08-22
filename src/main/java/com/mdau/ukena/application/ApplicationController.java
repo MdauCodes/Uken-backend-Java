@@ -4,6 +4,7 @@ import com.mdau.ukena.application.dto.*;
 import com.mdau.ukena.common.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -48,8 +49,13 @@ public class ApplicationController {
         return ResponseEntity.ok(ApiResponse.ok(applicationService.getById(id)));
     }
 
+    // Approving an application can provision a brand-new creator or
+    // re-activate a previously suspended one (ApplicationService.handleApproval)
+    // — without evicting here, that creator wouldn't show up in the public
+    // GET /creators listing until something unrelated cleared the cache.
     @PatchMapping("/admin/applications/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
     public ResponseEntity<ApiResponse<ApplicationDto>> updateStatus(
             @PathVariable String id,
             @Valid @RequestBody StatusUpdateRequest req) {

@@ -86,6 +86,7 @@ public class AdminController {
      * no application on file to source them from.
      */
     @PostMapping("/buyers/{id}/convert-to-creator")
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
     public ResponseEntity<Void> convertToCreator(
             @PathVariable UUID id, @Valid @RequestBody ConvertToCreatorRequest req) {
         adminService.convertToCreator(id, req);
@@ -100,7 +101,16 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(adminService.listCreators(status)));
     }
 
+    /**
+     * Evicts the public creators/creator/featured caches — without this,
+     * suspending or unsuspending a creator here never invalidates the
+     * cached public listing (GET /creators, GET /creators/{id}), which was
+     * only ever cleared by an unrelated admin profile edit. A suspended
+     * creator could keep showing publicly, or a reinstated one could stay
+     * hidden, until something else happened to clear the cache.
+     */
     @PatchMapping("/creators/{id}/suspend")
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
     public ResponseEntity<Void> suspendCreator(
             @AuthenticationPrincipal CurrentUser currentUser, @PathVariable String id) {
         adminService.suspendCreator(currentUser, id);
@@ -108,6 +118,7 @@ public class AdminController {
     }
 
     @PatchMapping("/creators/{id}/unsuspend")
+    @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)
     public ResponseEntity<Void> unsuspendCreator(
             @AuthenticationPrincipal CurrentUser currentUser, @PathVariable String id) {
         adminService.unsuspendCreator(currentUser, id);
