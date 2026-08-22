@@ -50,10 +50,10 @@ public class CategorySeeder implements ApplicationRunner {
     // per the 2026-08-21 decision on image sourcing.
     private static final List<Seed> SEEDS = List.of(
             new Seed("crafts", "Crafts", "terracotta", 0, List.of("Beadwork"),
-                    "https://images.pexels.com/photos/33203798/pexels-photo-33203798.jpeg"),
+                    "https://images.pexels.com/photos/32405948/pexels-photo-32405948.jpeg"),
             new Seed("farm-produce", "Farm & Produce", "sage", 1, List.of(
                     "Horticulture and AgriBusiness", "HASS FARMING", "Tree nursery", "Farming", "Avocado grower"),
-                    "https://images.pexels.com/photos/29630126/pexels-photo-29630126.jpeg"),
+                    "https://images.pexels.com/photos/37875706/pexels-photo-37875706.jpeg"),
             // New categories (2026-08-21) — seeded inactive; an admin activates
             // each from the Categories screen once it's ready to go live.
             new Seed("textiles", "Textiles", "indigo", 2,
@@ -61,7 +61,7 @@ public class CategorySeeder implements ApplicationRunner {
                     "https://images.pexels.com/photos/35692211/pexels-photo-35692211.jpeg"),
             new Seed("pottery-ceramics", "Pottery & Ceramics", "rust", 3,
                     List.of("Pottery and Ceramics", "Ceramic Art", "Pottery"),
-                    "https://images.pexels.com/photos/29630126/pexels-photo-29630126.jpeg"),
+                    "https://images.pexels.com/photos/18373966/pexels-photo-18373966.jpeg"),
             new Seed("home-decor", "Home & Decor", "gold", 4,
                     List.of("Home Decor Craftsmanship", "Woodwork and Home Decor", "Interior Craft"),
                     "https://images.pexels.com/photos/12715584/pexels-photo-12715584.jpeg"),
