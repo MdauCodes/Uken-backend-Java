@@ -9,7 +9,6 @@ import com.mdau.ukena.user.UserRepository;
 import com.mdau.ukena.user.UserRole;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -26,37 +25,58 @@ public class DataSeeder implements ApplicationRunner {
     private final CreatorRepository      creatorRepository;
     private final PasswordEncoder        passwordEncoder;
 
-    @Value("${ukena.admin.email:admin@ukena.co.uk}")
-    private String adminEmail;
-
-    @Value("${ukena.admin.password:#{null}}")
-    private String adminPassword;
+    /** The one account that can manage other admin accounts (create/promote/
+     *  demote — see AdminService.requireSuperAdmin). Hardcoded, not an env
+     *  var: this is a specific real person's account, not environment
+     *  config that should vary between deploys. */
+    private static final String DESIGNATED_SUPERADMIN_EMAIL = "mdaucodes@gmail.com";
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        seedSuperAdmin();
+        ensureDesignatedSuperAdmin();
         seedFeaturedSlots();
         seedUkenaCreator();
     }
 
-    private void seedSuperAdmin() {
-        if (userRepository.existsByEmail(adminEmail)) {
-            log.info("Superadmin already exists - skipping seed");
+    /** Idempotent and self-healing: creates the designated superadmin with a
+     *  random, never-logged password if it doesn't exist yet — the real
+     *  owner sets their own real password via the existing "Forgot password"
+     *  email-OTP flow, so nobody (including this seeder's own logs) ever
+     *  holds a usable password for this account. If the account already
+     *  exists under some other role (e.g. it registered as a buyer before
+     *  being designated), promotes it to ROLE_ADMIN + superAdmin=true in
+     *  place on the next boot — but never touches an existing password
+     *  hash. Deliberately does NOT seed the old env-var-driven bootstrap
+     *  admin any more: that account is being retired, and re-seeding it on
+     *  every boot would just recreate it after removal. */
+    private void ensureDesignatedSuperAdmin() {
+        User user = userRepository.findByEmail(DESIGNATED_SUPERADMIN_EMAIL).orElse(null);
+        if (user == null) {
+            user = User.builder()
+                    .email(DESIGNATED_SUPERADMIN_EMAIL)
+                    .passwordHash(passwordEncoder.encode(java.util.UUID.randomUUID().toString()))
+                    .fullName("Ukena Superadmin")
+                    .role(UserRole.ROLE_ADMIN)
+                    .superAdmin(true)
+                    .build();
+            userRepository.save(user);
+            log.info("Designated superadmin created: {} - set a real password via Forgot Password", DESIGNATED_SUPERADMIN_EMAIL);
             return;
         }
-        if (adminPassword == null || adminPassword.isBlank()) {
-            log.error("UKENA_ADMIN_PASSWORD env variable not set - superadmin not created");
-            return;
+        boolean changed = false;
+        if (user.getRole() != UserRole.ROLE_ADMIN) {
+            user.setRole(UserRole.ROLE_ADMIN);
+            changed = true;
         }
-        User superAdmin = User.builder()
-                .email(adminEmail)
-                .passwordHash(passwordEncoder.encode(adminPassword))
-                .fullName("Ukena Superadmin")
-                .role(UserRole.ROLE_ADMIN)
-                .build();
-        userRepository.save(superAdmin);
-        log.info("Superadmin created: {}", adminEmail);
+        if (!Boolean.TRUE.equals(user.getSuperAdmin())) {
+            user.setSuperAdmin(true);
+            changed = true;
+        }
+        if (changed) {
+            userRepository.save(user);
+            log.info("Designated superadmin promoted in place: {}", DESIGNATED_SUPERADMIN_EMAIL);
+        }
     }
 
     private void seedFeaturedSlots() {

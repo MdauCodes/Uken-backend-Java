@@ -43,15 +43,17 @@ public class EmailTemplateSeeder implements ApplicationRunner {
     private final EmailTemplateRepository templateRepository;
     private final UserRepository userRepository;
 
-    @Value("${ukena.admin.email:admin@ukena.co.uk}")
-    private String adminEmail;
+    /** Matches DataSeeder.DESIGNATED_SUPERADMIN_EMAIL — the old
+     *  admin@ukena.co.uk bootstrap account this used to look up is being
+     *  retired, so this points at the same real designated account instead. */
+    private static final String OWNER_EMAIL = "mdaucodes@gmail.com";
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        User owner = userRepository.findByEmail(adminEmail).orElse(null);
+        User owner = userRepository.findByEmail(OWNER_EMAIL).orElse(null);
         if (owner == null) {
-            log.info("Superadmin not found yet ({}) - skipping template seed this boot", adminEmail);
+            log.info("Superadmin not found yet ({}) - skipping template seed this boot", OWNER_EMAIL);
             return;
         }
         for (Seed seed : SEEDS) {
