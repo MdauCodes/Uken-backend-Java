@@ -222,6 +222,15 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
+    public OrderDto getBuyerOrderByDisplayId(UUID buyerId, String displayId) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found"));
+        if (order.getBuyer() == null || !order.getBuyer().getId().equals(buyerId))
+            throw ApiException.notFound("Order not found");
+        return toDto(order);
+    }
+
+    @Transactional(readOnly = true)
     public List<OrderDto> getCreatorOrders(String creatorId) {
         return orderRepository.findByCreatorId(creatorId)
                 .stream().map(this::toDto).toList();

@@ -61,6 +61,15 @@ public class OrderController {
                 orderService.getBuyerOrders(currentUser.id())));
     }
 
+    @GetMapping("/orders/{displayId}")
+    @PreAuthorize("hasRole('BUYER')")
+    public ResponseEntity<ApiResponse<OrderDto>> buyerOrderByDisplayId(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable String displayId) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                orderService.getBuyerOrderByDisplayId(currentUser.id(), displayId)));
+    }
+
     @GetMapping("/creators/me/orders")
     @PreAuthorize("hasRole('CREATOR')")
     public ResponseEntity<ApiResponse<List<OrderDto>>> creatorOrders(
