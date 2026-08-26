@@ -145,4 +145,8 @@ public interface ProductRepository extends JpaRepository<Product, String> {
         AND p.deletedAt IS NULL
     """)
     List<Product> findUncategorizedNotDeleted();
+
+    /** How many real, live products a category actually has — used to decide
+     *  whether a seeded-inactive category is ready to go live automatically. */
+    long countByCategory_IdAndDeletedAtIsNullAndStatus(String categoryId, ProductStatus status);
 }

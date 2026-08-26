@@ -98,7 +98,50 @@ public class CategorySeeder implements ApplicationRunner {
             log.info("Seeded category: {} (active={})", seed.name(), category.isActive());
         }
 
+        backfillMissingThumbnails();
         backfillUncategorized();
+        activateCategoriesWithRealProducts();
+    }
+
+    /** The create-only guard above protects deliberate admin edits (name,
+     *  color, craft values) from ever being overwritten — but it also means
+     *  a category row created before this seed data had thumbnails never
+     *  got one backfilled. A null thumbnail is never a deliberate admin
+     *  choice (the card is designed to always show one), so this fills it
+     *  in from the seed once, without touching any field an admin might
+     *  have actually edited. */
+    private void backfillMissingThumbnails() {
+        for (Seed seed : SEEDS) {
+            if (seed.thumbnailImage() == null) continue;
+            categoryRepository.findById(seed.id()).ifPresent(category -> {
+                if (category.getThumbnailImage() == null || category.getThumbnailImage().isBlank()) {
+                    category.setThumbnailImage(seed.thumbnailImage());
+                    categoryRepository.save(category);
+                    log.info("Backfilled thumbnail for category: {}", category.getName());
+                }
+            });
+        }
+    }
+
+    /** New categories seed inactive since they start with no real products —
+     *  once real products actually land in one (via the craft-matching
+     *  backfill above, across restarts), it's ready to go live without
+     *  needing a manual admin toggle. Never deactivates a category an admin
+     *  turned on, or one an admin deliberately turned back off — only ever
+     *  flips inactive -> active, and only when it's genuinely no longer empty. */
+    private void activateCategoriesWithRealProducts() {
+        List<Category> inactive = categoryRepository.findAllByOrderBySortOrderAscNameAsc().stream()
+                .filter(c -> !c.isActive())
+                .toList();
+        for (Category category : inactive) {
+            long liveProducts = productRepository.countByCategory_IdAndDeletedAtIsNullAndStatus(
+                    category.getId(), com.mdau.ukena.product.ProductStatus.ACTIVE);
+            if (liveProducts > 0) {
+                category.setActive(true);
+                categoryRepository.save(category);
+                log.info("Activated category {} — {} real product(s) found", category.getName(), liveProducts);
+            }
+        }
     }
 
     private void backfillUncategorized() {
