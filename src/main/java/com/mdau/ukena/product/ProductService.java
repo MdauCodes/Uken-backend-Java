@@ -536,7 +536,7 @@ public class ProductService {
                 categoryDto,
                 p.isUkenaOwned(), p.isAvailableOnline(),
                 avgRating, (int) reviewCount, unitsSold,
-                p.getDeletedAt() != null, p.getDeletedAt(), p.isImagesPurged());
+                p.getDeletedAt() != null, p.getDeletedAt(), p.isImagesPurged(), p.isDemoProduct());
     }
 
     private <T> List<T> parseList(String json, TypeReference<List<T>> ref) {

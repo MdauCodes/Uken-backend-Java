@@ -125,9 +125,22 @@ public class Product {
     @Column(name = "images_purged")
     private Boolean imagesPurged;
 
+    /** True only for products created by DemoContentSeeder to fill out
+     *  otherwise-empty categories — never a real listing. The storefront
+     *  uses this to block a real add-to-cart (nothing is actually fulfilled
+     *  behind these) while still letting them look and browse like real
+     *  listings. Boxed/nullable for the same ddl-auto safety reason as
+     *  imagesPurged above; every real product is null/false. Field named
+     *  without the "is" prefix (unlike the column) so Lombok's boxed-Boolean
+     *  getter naming stays unambiguous — see isDemoProduct() below. */
+    @Column(name = "is_demo")
+    private Boolean demo;
+
     public boolean isDeleted() { return deletedAt != null; }
 
     public boolean isImagesPurged() { return Boolean.TRUE.equals(imagesPurged); }
+
+    public boolean isDemoProduct() { return Boolean.TRUE.equals(demo); }
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

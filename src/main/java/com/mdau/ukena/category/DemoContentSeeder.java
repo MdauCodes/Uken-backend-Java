@@ -239,12 +239,34 @@ public class DemoContentSeeder implements ApplicationRunner {
                         .weightGrams(dp.weightGrams())
                         .status(ProductStatus.SUSPENDED_BY_ADMIN)
                         .category(category)
+                        .demo(true)
                         .build();
                 productRepository.save(product);
             }
 
             log.info("Seeded demo creator: {} with {} product(s) (hidden — SUSPENDED_BY_ADMIN)",
                     dc.fullName(), dc.products().size());
+        }
+
+        backfillDemoFlag();
+    }
+
+    /** The create-only loop above skips a product that already exists — so
+     *  the very first demo batch (created before the demo flag existed) never
+     *  got it set. Every id in DEMO_CREATORS is a demo product by definition,
+     *  so this just ensures the flag is true on all of them, regardless of
+     *  when they were created; never touches any field an admin might have
+     *  edited since (name, price, status, etc.). */
+    private void backfillDemoFlag() {
+        for (DemoCreator dc : DEMO_CREATORS) {
+            for (DemoProduct dp : dc.products()) {
+                productRepository.findById(dp.id()).ifPresent(product -> {
+                    if (!product.isDemoProduct()) {
+                        product.setDemo(true);
+                        productRepository.save(product);
+                    }
+                });
+            }
         }
     }
 

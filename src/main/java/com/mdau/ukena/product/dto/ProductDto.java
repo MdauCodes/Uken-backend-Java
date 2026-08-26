@@ -36,5 +36,10 @@ public record ProductDto(
         java.time.Instant deletedAt,
         /** True once the 7-day recovery window has expired and images were purged —
          *  restore is only possible while this is false. */
-        boolean imagesPurged
+        boolean imagesPurged,
+        /** True only for DemoContentSeeder-created products — never a real,
+         *  fulfillable listing. The storefront uses this to block a real
+         *  add-to-cart while still letting the listing look and browse
+         *  like a real one. */
+        boolean isDemo
 ) {}
