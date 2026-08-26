@@ -68,12 +68,19 @@ public class CategorySeeder implements ApplicationRunner {
             new Seed("ebooks", "E-books", "slate", 5,
                     List.of("Digital Publishing", "Author and Publisher"),
                     "https://images.pexels.com/photos/20092850/pexels-photo-20092850.jpeg"),
-            // "clay" is the last unused color token in categoryColor.ts's
-            // palette (frontend) — adding a further category beyond this one
-            // needs a new token defined there first, not just here.
             new Seed("jewelry-accessories", "Jewelry & Accessories", "clay", 6,
                     List.of("Beaded Jewelry", "Jewelry Making", "Leatherwork", "Leather Craft"),
-                    "https://images.pexels.com/photos/10562316/pexels-photo-10562316.jpeg")
+                    "https://images.pexels.com/photos/10562316/pexels-photo-10562316.jpeg"),
+            // Third batch (2026-08-26) — two more categories, "moss" and
+            // "mauve" newly added to categoryColor.ts's palette (frontend)
+            // for these. Any further category beyond this needs another new
+            // token defined there first, not just here.
+            new Seed("coffee-tea", "Coffee & Tea", "moss", 7,
+                    List.of("Coffee Roasting", "Coffee Farming", "Tea Growing", "Tea Processing"),
+                    "https://images.pexels.com/photos/34977389/pexels-photo-34977389.jpeg"),
+            new Seed("beauty-wellness", "Beauty & Wellness", "mauve", 8,
+                    List.of("Natural Skincare", "Soap Making", "Beauty and Wellness"),
+                    "https://images.pexels.com/photos/35305096/pexels-photo-35305096.jpeg")
     );
 
     /** New (2026-08-21) categories seeded inactive by default — no live
@@ -81,7 +88,8 @@ public class CategorySeeder implements ApplicationRunner {
      *  (GET /categories only returns active=true) until an admin flips them
      *  on. Crafts/Farm & Produce are pre-existing and already real. */
     private static final List<String> STARTS_INACTIVE =
-            List.of("textiles", "pottery-ceramics", "home-decor", "ebooks", "jewelry-accessories");
+            List.of("textiles", "pottery-ceramics", "home-decor", "ebooks", "jewelry-accessories",
+                    "coffee-tea", "beauty-wellness");
 
     @Override
     @Transactional
