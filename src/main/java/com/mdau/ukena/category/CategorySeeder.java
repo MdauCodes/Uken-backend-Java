@@ -67,14 +67,21 @@ public class CategorySeeder implements ApplicationRunner {
                     "https://images.pexels.com/photos/12715584/pexels-photo-12715584.jpeg"),
             new Seed("ebooks", "E-books", "slate", 5,
                     List.of("Digital Publishing", "Author and Publisher"),
-                    "https://images.pexels.com/photos/20092850/pexels-photo-20092850.jpeg")
+                    "https://images.pexels.com/photos/20092850/pexels-photo-20092850.jpeg"),
+            // "clay" is the last unused color token in categoryColor.ts's
+            // palette (frontend) — adding a further category beyond this one
+            // needs a new token defined there first, not just here.
+            new Seed("jewelry-accessories", "Jewelry & Accessories", "clay", 6,
+                    List.of("Beaded Jewelry", "Jewelry Making", "Leatherwork", "Leather Craft"),
+                    "https://images.pexels.com/photos/10562316/pexels-photo-10562316.jpeg")
     );
 
     /** New (2026-08-21) categories seeded inactive by default — no live
      *  products/creators yet, so they shouldn't appear on the public site
      *  (GET /categories only returns active=true) until an admin flips them
      *  on. Crafts/Farm & Produce are pre-existing and already real. */
-    private static final List<String> STARTS_INACTIVE = List.of("textiles", "pottery-ceramics", "home-decor", "ebooks");
+    private static final List<String> STARTS_INACTIVE =
+            List.of("textiles", "pottery-ceramics", "home-decor", "ebooks", "jewelry-accessories");
 
     @Override
     @Transactional

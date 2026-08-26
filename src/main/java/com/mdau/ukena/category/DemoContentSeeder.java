@@ -121,6 +121,85 @@ public class DemoContentSeeder implements ApplicationRunner {
                                     "A digital cookbook of traditional recipes, collected and written by the author. Delivered as a download.",
                                     List.of("PDF download"), "Digital download", "N/A", 1)
                     )
+            ),
+            // Second batch (2026-08-26) — one more maker per thin category,
+            // plus two for the new Jewelry & Accessories category, at the
+            // client's request to make the catalogue feel more populated
+            // ahead of real makers onboarding into each. Same rules as
+            // above: SUSPENDED_BY_ADMIN until an admin reviews and activates
+            // from the Products screen, real Pexels photography (each URL
+            // verified to actually resolve before being added here).
+            new DemoCreator(
+                    "zawadi-textiles-demo", "Zawadi", "Zawadi Weaving House", "Textile Weaving", "Machakos, Kenya",
+                    "Handwoven rugs and mats made on a traditional floor loom, using wool and cotton sourced regionally.",
+                    "https://images.pexels.com/photos/22942812/pexels-photo-22942812.jpeg",
+                    "textiles",
+                    List.of(
+                            new DemoProduct("p-demo-woven-rug", "Handwoven Wool Rug", 6500,
+                                    "https://images.pexels.com/photos/34506224/pexels-photo-34506224.jpeg",
+                                    "A floor rug hand-woven on a traditional loom, in a pattern passed down through the family workshop.",
+                                    List.of("Wool", "Cotton warp"), "120cm x 80cm", "Shake out and air; spot clean only.")
+                    )
+            ),
+            new DemoCreator(
+                    "baraka-ceramics-demo", "Baraka", "Baraka Clayworks", "Pottery and Ceramics", "Kisumu, Kenya",
+                    "Hand-thrown stoneware fired in a wood-burning kiln, finished with food-safe glazes.",
+                    "https://images.pexels.com/photos/38428349/pexels-photo-38428349.jpeg",
+                    "pottery-ceramics",
+                    List.of(
+                            new DemoProduct("p-demo-ceramic-bowls", "Set of Ceramic Serving Bowls", 4200,
+                                    "https://images.pexels.com/photos/29312155/pexels-photo-29312155.jpeg",
+                                    "A set of hand-thrown serving bowls, each individually shaped, in a clean matte glaze.",
+                                    List.of("Stoneware clay"), "Set of 4, 14cm diameter", "Hand wash only.")
+                    )
+            ),
+            new DemoCreator(
+                    "oduya-woodwork-demo", "Peter", "Oduya Woodwork", "Home Decor Craftsmanship", "Kakamega, Kenya",
+                    "Small furniture and serving pieces carved from reclaimed hardwood, finished by hand.",
+                    "https://images.pexels.com/photos/6790933/pexels-photo-6790933.jpeg",
+                    "home-decor",
+                    List.of(
+                            new DemoProduct("p-demo-serving-tray", "Handcrafted Wooden Serving Tray", 3400,
+                                    "https://images.pexels.com/photos/10545937/pexels-photo-10545937.jpeg",
+                                    "A serving tray carved with an inlaid pattern, sanded smooth and finished with food-safe oil.",
+                                    List.of("Mahogany"), "45cm x 30cm", "Wipe with a dry cloth; oil occasionally.")
+                    )
+            ),
+            new DemoCreator(
+                    "wanjiru-digital-demo", "Grace", "Wanjiru Digital Press", "Digital Publishing", "Nairobi, Kenya",
+                    "Independently written and published digital guides on East African travel and culture.",
+                    "https://images.pexels.com/photos/9895992/pexels-photo-9895992.jpeg",
+                    "ebooks",
+                    List.of(
+                            new DemoProduct("p-demo-ebook-travel-guide", "Kenya Travel & Culture Guide — Digital Edition", 799,
+                                    "https://images.pexels.com/photos/5137809/pexels-photo-5137809.jpeg",
+                                    "A self-published digital guide to Kenya's regions, culture, and markets. Delivered as a download.",
+                                    List.of("PDF download"), "Digital download", "N/A", 1)
+                    )
+            ),
+            new DemoCreator(
+                    "naisula-beadwork-demo", "Naisula", "Naisula Beadwork", "Beaded Jewelry", "Kajiado, Kenya",
+                    "Traditional Maasai beaded jewelry, strung and finished by hand using glass beads and cotton thread.",
+                    "https://images.pexels.com/photos/31151819/pexels-photo-31151819.jpeg",
+                    "jewelry-accessories",
+                    List.of(
+                            new DemoProduct("p-demo-beaded-necklace", "Maasai Beaded Necklace", 2400,
+                                    "https://images.pexels.com/photos/29831467/pexels-photo-29831467.jpeg",
+                                    "A hand-strung beaded necklace in a traditional pattern, made using glass beads on cotton thread.",
+                                    List.of("Glass beads", "Cotton thread"), "45cm length", "Wipe clean; avoid water.")
+                    )
+            ),
+            new DemoCreator(
+                    "bakari-leather-demo", "Hassan", "Bakari Leatherworks", "Leatherwork", "Malindi, Kenya",
+                    "Handmade leather sandals and small goods, cut and stitched by hand using traditional tools.",
+                    "https://images.pexels.com/photos/38226090/pexels-photo-38226090.jpeg",
+                    "jewelry-accessories",
+                    List.of(
+                            new DemoProduct("p-demo-leather-sandals", "Handmade Leather Sandals", 3800,
+                                    "https://images.pexels.com/photos/37136138/pexels-photo-37136138.jpeg",
+                                    "A pair of hand-cut and hand-stitched leather sandals, made to order and finished with natural oils.",
+                                    List.of("Genuine leather"), "Made to order, sizes 36–45", "Condition with leather oil periodically.")
+                    )
             )
     );
 
