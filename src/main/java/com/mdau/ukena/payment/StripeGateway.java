@@ -2,9 +2,12 @@ package com.mdau.ukena.payment;
 
 import com.mdau.ukena.common.ApiException;
 import com.stripe.Stripe;
+import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
+import com.stripe.model.Refund;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.Webhook;
+import com.stripe.param.RefundCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import lombok.extern.slf4j.Slf4j;
 
@@ -91,5 +94,34 @@ public class StripeGateway implements PaymentGateway {
     public PayoutResult initiateTransfer(PayoutRequest req) {
         log.info("Stripe payout queued for creator={} — Stripe Connect not yet configured", req.creatorId());
         return new PayoutResult(true, null, "Payout via Stripe Connect coming soon");
+    }
+
+    /** gatewayRef may be a Checkout Session id ("cs_...", online orders — resolved to its
+     *  PaymentIntent first, since a Session itself isn't refundable) or already a
+     *  PaymentIntent id ("pi_...", POS/Terminal orders). card_present and Checkout
+     *  charges refund identically through the standard Refunds API — no card or reader
+     *  needed even for an in-person sale. */
+    @Override
+    public RefundResult refund(RefundRequest req) {
+        try {
+            String paymentIntentId = req.gatewayRef();
+            if (paymentIntentId != null && paymentIntentId.startsWith("cs_")) {
+                Session session = Session.retrieve(paymentIntentId);
+                paymentIntentId = session.getPaymentIntent();
+                if (paymentIntentId == null || paymentIntentId.isBlank()) {
+                    return new RefundResult(false, null, "Checkout session has no payment to refund");
+                }
+            }
+            RefundCreateParams.Builder builder = RefundCreateParams.builder()
+                    .setPaymentIntent(paymentIntentId);
+            if (req.amountPence() != null) builder.setAmount((long) req.amountPence());
+            Refund refund = Refund.create(builder.build());
+            log.info("Stripe refund created: order={} refundId={} status={}",
+                    req.displayId(), refund.getId(), refund.getStatus());
+            return new RefundResult(true, refund.getId(), refund.getStatus());
+        } catch (StripeException e) {
+            log.error("Stripe refund error for order {}", req.displayId(), e);
+            return new RefundResult(false, null, e.getMessage());
+        }
     }
 }

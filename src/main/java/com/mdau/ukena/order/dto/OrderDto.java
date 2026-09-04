@@ -16,5 +16,11 @@ public record OrderDto(
         int totalPence,
         OrderBuyerDto buyer,
         List<OrderItemDto> items,
-        DeliveryDto delivery
+        DeliveryDto delivery,
+        /** Reason the last card-charge attempt failed/was declined/was cancelled —
+         *  null unless a charge attempt has actually failed. POS surfaces this
+         *  directly instead of a generic timeout message. */
+        String lastPaymentError,
+        /** Total refunded so far, in pence. 0 = no refund. */
+        int refundedPence
 ) {}

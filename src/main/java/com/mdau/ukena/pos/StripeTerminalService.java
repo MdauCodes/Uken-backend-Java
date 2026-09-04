@@ -2,11 +2,17 @@ package com.mdau.ukena.pos;
 
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
+import com.mdau.ukena.pos.dto.PosReaderStatus;
 import com.stripe.Stripe;
+import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
 import com.stripe.model.terminal.Reader;
 import com.stripe.net.Webhook;
+import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.RefundCreateParams;
+import com.stripe.param.terminal.ReaderCancelActionParams;
 import com.stripe.param.terminal.ReaderProcessPaymentIntentParams;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -42,42 +48,130 @@ public class StripeTerminalService {
     @Value("${ukena.stripe.terminal.reader-id:}")
     private String readerId;
 
+    @Value("${ukena.stripe.currency:gbp}")
+    private String currency;
+
     @PostConstruct
     void init() {
         Stripe.apiKey = stripeSecretKey;
     }
 
-    public PosPaymentIntentResponse createPaymentIntent(String displayId, int amountPence) {
+    public PosPaymentIntentResponse createPaymentIntent(String displayId, int amountPence, String receiptEmail) {
         try {
-            PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+            PaymentIntentCreateParams.Builder builder = PaymentIntentCreateParams.builder()
                     .setAmount((long) amountPence)
-                    .setCurrency("gbp")
+                    .setCurrency(currency)
                     .addPaymentMethodType("card_present")
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.AUTOMATIC)
-                    .putMetadata("display_id", displayId)
-                    .build();
-            PaymentIntent intent = PaymentIntent.create(params);
+                    .putMetadata("display_id", displayId);
+            // Card-network rule: a card-present sale must offer the customer a physical
+            // or email receipt. There's no printer on this device, so email is it —
+            // Stripe sends its own compliant receipt (with the EMV fields a card
+            // network requires) on capture; skip when there's no real address to send.
+            if (receiptEmail != null && !receiptEmail.isBlank()) {
+                builder.setReceiptEmail(receiptEmail);
+            }
+            PaymentIntent intent = PaymentIntent.create(builder.build());
             return new PosPaymentIntentResponse(intent.getId(), intent.getClientSecret());
-        } catch (Exception e) {
+        } catch (StripeException e) {
             log.error("Stripe Terminal payment intent error for order {}", displayId, e);
             throw ApiException.internalError("Could not start the card payment: " + e.getMessage());
         }
     }
 
     /** Tells the configured reader to prompt the customer for this payment. Fire-and-forget
-     *  from here — actual success/failure arrives later as a payment_intent.succeeded webhook. */
+     *  from here — actual success/failure arrives later as a payment_intent.succeeded (or
+     *  payment_intent.payment_failed / terminal.reader.action_failed) webhook. Customer
+     *  cancellation is enabled so a customer who walks away can back out from the reader
+     *  itself rather than leaving the operator stuck waiting on a prompt nobody will answer. */
     public void dispatchToReader(String paymentIntentId) {
-        if (readerId == null || readerId.isBlank())
-            throw ApiException.internalError(
-                    "No card reader configured — set ukena.stripe.terminal.reader-id once the reader is registered in the Stripe Dashboard");
+        requireReaderConfigured();
         try {
             Reader reader = Reader.retrieve(readerId);
             reader.processPaymentIntent(ReaderProcessPaymentIntentParams.builder()
                     .setPaymentIntent(paymentIntentId)
+                    .setProcessConfig(ReaderProcessPaymentIntentParams.ProcessConfig.builder()
+                            .setEnableCustomerCancellation(true)
+                            .build())
                     .build());
-        } catch (Exception e) {
+        } catch (StripeException e) {
             log.error("Stripe Terminal dispatch-to-reader error for intent {}", paymentIntentId, e);
-            throw ApiException.internalError("Could not reach the card reader: " + e.getMessage());
+            throw ApiException.badRequest(mapReaderError(e));
+        }
+    }
+
+    public PaymentIntent retrievePaymentIntent(String paymentIntentId) {
+        try {
+            return PaymentIntent.retrieve(paymentIntentId);
+        } catch (StripeException e) {
+            log.error("Stripe Terminal retrieve-intent error for {}", paymentIntentId, e);
+            throw ApiException.internalError("Could not check the card payment: " + e.getMessage());
+        }
+    }
+
+    /** Cancels a PaymentIntent that never completed — used before starting a fresh one
+     *  when the previous attempt landed in a state it can't just be re-dispatched from
+     *  (see PosService.charge), and tolerant of one that's already cancelled/gone. */
+    public void cancelPaymentIntent(String paymentIntentId) {
+        if (paymentIntentId == null || paymentIntentId.isBlank()) return;
+        try {
+            PaymentIntent intent = PaymentIntent.retrieve(paymentIntentId);
+            if ("canceled".equals(intent.getStatus()) || "succeeded".equals(intent.getStatus())) return;
+            intent.cancel(PaymentIntentCancelParams.builder().build());
+        } catch (StripeException e) {
+            log.warn("Stripe Terminal cancel-intent {} failed (continuing): {}", paymentIntentId, e.getMessage());
+        }
+    }
+
+    /** The operator's escape hatch for a stuck reader prompt (customer walked away, or
+     *  the operator mis-rang the sale) — without this, the NEXT charge attempt fails with
+     *  terminal_reader_busy since the reader considers itself still mid-action. */
+    public void cancelReaderAction() {
+        requireReaderConfigured();
+        try {
+            Reader.retrieve(readerId).cancelAction(ReaderCancelActionParams.builder().build());
+        } catch (StripeException e) {
+            // Already idle is not a real failure — the operator's intent (get the
+            // reader back to a clean state) is already satisfied.
+            if (!isReaderIdleError(e)) {
+                log.error("Stripe Terminal cancel-action error", e);
+                throw ApiException.badRequest(mapReaderError(e));
+            }
+        }
+    }
+
+    /** Polled by the POS screen so an offline/busy reader is visible before a customer
+     *  is standing there, instead of only surfacing as a failed charge. */
+    public PosReaderStatus readerStatus() {
+        if (readerId == null || readerId.isBlank()) {
+            return new PosReaderStatus(false, "No reader configured", null, null);
+        }
+        try {
+            Reader reader = Reader.retrieve(readerId);
+            Reader.Action action = reader.getAction();
+            return new PosReaderStatus(
+                    "online".equalsIgnoreCase(reader.getStatus()),
+                    reader.getLabel(),
+                    action != null ? action.getStatus() : null,
+                    action != null ? action.getFailureCode() : null);
+        } catch (StripeException e) {
+            log.warn("Stripe Terminal reader-status error: {}", e.getMessage());
+            return new PosReaderStatus(false, "Unreachable", null, null);
+        }
+    }
+
+    /** card_present charges refund exactly like any other Stripe charge — full API
+     *  refund, no card or reader needed. amountPence null = full refund. */
+    public String createRefund(String paymentIntentId, Integer amountPence) {
+        try {
+            RefundCreateParams.Builder builder = RefundCreateParams.builder()
+                    .setPaymentIntent(paymentIntentId);
+            if (amountPence != null) builder.setAmount((long) amountPence);
+            Refund refund = Refund.create(builder.build());
+            return refund.getId();
+        } catch (StripeException e) {
+            log.error("Stripe Terminal refund error for intent {}", paymentIntentId, e);
+            throw ApiException.badRequest("Could not process the refund: " + e.getMessage());
         }
     }
 
@@ -93,5 +187,31 @@ public class StripeTerminalService {
             log.warn("Stripe Terminal webhook signature invalid: {}", e.getMessage());
             return false;
         }
+    }
+
+    private void requireReaderConfigured() {
+        if (readerId == null || readerId.isBlank())
+            throw ApiException.internalError(
+                    "No card reader configured — set ukena.stripe.terminal.reader-id once the reader is registered in the Stripe Dashboard");
+    }
+
+    private boolean isReaderIdleError(StripeException e) {
+        String code = e.getCode();
+        return code != null && (code.contains("no_action") || code.contains("nothing_to_cancel"));
+    }
+
+    /** Translates the handful of reader-specific error codes Stripe documents into
+     *  something an operator standing at a market stall can actually act on, instead
+     *  of a raw "Could not reach the card reader: ..." 500. */
+    private String mapReaderError(StripeException e) {
+        String code = e.getCode();
+        if (code == null) return "Could not reach the card reader: " + e.getMessage();
+        return switch (code) {
+            case "terminal_reader_busy" -> "The reader is still on a previous sale — cancel it, then try again.";
+            case "terminal_reader_offline" -> "The reader is offline — check its WiFi, then try again.";
+            case "terminal_reader_timeout" -> "Didn't hear back from the reader in time — check its screen before retrying, the charge may have gone through.";
+            case "intent_invalid_state" -> "That sale is no longer chargeable — start a new sale.";
+            default -> "Could not reach the card reader: " + e.getMessage();
+        };
     }
 }

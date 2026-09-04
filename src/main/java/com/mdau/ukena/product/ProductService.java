@@ -463,6 +463,24 @@ public class ProductService {
         return true;
     }
 
+    /** Restores stock on a refund — the mirror of decrementStock(). No-op for untracked
+     *  products. Flips OUT_OF_STOCK back to ACTIVE once stock is positive again, but
+     *  only from exactly OUT_OF_STOCK — never overrides a status an admin deliberately
+     *  set (suspended, etc.), same discipline decrementStock already uses. */
+    @Transactional
+    public void restock(String productId, int qty) {
+        Product product = productRepository.findActiveById(productId).orElse(null);
+        if (product == null || product.getUnitsAvailable() == null) return; // deleted or untracked
+
+        productRepository.restock(productId, qty);
+
+        Product refreshed = productRepository.findActiveById(productId).orElseThrow();
+        if (refreshed.getUnitsAvailable() > 0 && refreshed.getStatus() == ProductStatus.OUT_OF_STOCK) {
+            refreshed.setStatus(ProductStatus.ACTIVE);
+            productRepository.save(refreshed);
+        }
+    }
+
     private void purgeImages(Product product) {
         List<String> ids = product.getImages().stream()
                 .map(ProductImage::getCloudinaryId)

@@ -12,6 +12,11 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Optional<Order> findByDisplayId(String displayId);
 
+    /** Resolves a Terminal webhook (action_failed/action_succeeded) back to its order
+     *  when the event payload carries the PaymentIntent id but not the display_id
+     *  metadata — see PaymentService.handleStripeWebhook. */
+    Optional<Order> findByPaymentIntentId(String paymentIntentId);
+
     List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
 
     List<Order> findByBuyerEmailIgnoreCaseAndBuyerIsNull(String email);

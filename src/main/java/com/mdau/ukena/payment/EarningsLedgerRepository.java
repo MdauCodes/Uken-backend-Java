@@ -24,6 +24,8 @@ public interface EarningsLedgerRepository extends JpaRepository<EarningsLedger, 
 
     long countByCreatorId(String creatorId);
 
+    List<EarningsLedger> findByOrderId(java.util.UUID orderId);
+
     @Query("""
         SELECT e FROM EarningsLedger e
         WHERE e.creatorId = :creatorId

@@ -113,6 +113,27 @@ public class PaystackGateway implements PaymentGateway {
                 "Payout handled via Paystack split at charge time");
     }
 
+    @Override
+    public RefundResult refund(RefundRequest req) {
+        try {
+            // gatewayRef here is the Paystack transaction reference set at charge time
+            // (see PaymentService.handlePaystackWebhook) — refunds key off that directly,
+            // no separate charge/intent id to resolve first.
+            Map<String, Object> body = new HashMap<>();
+            body.put("transaction", req.gatewayRef());
+            if (req.amountPence() != null) {
+                body.put("amount", Math.round((req.amountPence() / 100.0) * gbpToKesRate * 100));
+            }
+            JsonNode resp = post("/refund", body);
+            String status = resp.path("data").path("status").asText();
+            log.info("Paystack refund created: order={} ref={} status={}", req.displayId(), req.gatewayRef(), status);
+            return new RefundResult(true, resp.path("data").path("id").asText(null), status);
+        } catch (Exception e) {
+            log.error("Paystack refund error for order {}", req.displayId(), e);
+            return new RefundResult(false, null, e.getMessage());
+        }
+    }
+
     private JsonNode post(String path, Map<String, Object> body) throws Exception {
         String json = objectMapper.writeValueAsString(body);
         Request req = new Request.Builder()

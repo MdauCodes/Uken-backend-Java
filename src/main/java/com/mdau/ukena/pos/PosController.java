@@ -4,6 +4,7 @@ import com.mdau.ukena.common.ApiResponse;
 import com.mdau.ukena.order.dto.OrderDto;
 import com.mdau.ukena.pos.dto.PosOrderRequest;
 import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
+import com.mdau.ukena.pos.dto.PosReaderStatus;
 import com.mdau.ukena.product.dto.ProductDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,11 +16,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /** Market-stall POS — Stripe Terminal server-driven checkout against a smart
- *  reader (WisePOS E / Stripe Reader S700). Admin-only for now; see the plan
- *  for a future lighter staff role. */
+ *  reader (WisePOS E / Stripe Reader S700). Admin or support staff — running the
+ *  till doesn't need a full admin login. */
 @RestController
 @RequestMapping("/pos")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
 @RequiredArgsConstructor
 public class PosController {
 
@@ -40,10 +41,28 @@ public class PosController {
 
     /** Creates the PaymentIntent and dispatches it to the reader — the reader itself
      *  then prompts the customer to tap/insert. Returns immediately; poll GET
-     *  /pos/orders/{displayId} for the outcome once payment_intent.succeeded lands. */
+     *  /pos/orders/{displayId} for the outcome once payment_intent.succeeded lands.
+     *  Safe to call again on the same order — reuses the live PaymentIntent rather
+     *  than risking a double charge. */
     @PostMapping("/orders/{displayId}/charge")
     public ResponseEntity<ApiResponse<PosPaymentIntentResponse>> charge(@PathVariable String displayId) {
         return ResponseEntity.ok(ApiResponse.ok(posService.charge(displayId), "Charge sent to reader"));
+    }
+
+    /** Cancels a stuck/unwanted reader prompt (customer walked away, mis-rung sale) —
+     *  without this the next charge attempt fails with the reader considering itself
+     *  still mid-action. */
+    @PostMapping("/orders/{displayId}/cancel-charge")
+    public ResponseEntity<ApiResponse<Void>> cancelCharge(@PathVariable String displayId) {
+        posService.cancelCharge(displayId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Charge cancelled"));
+    }
+
+    /** Polled by the POS screen so an offline/busy reader is visible before a
+     *  customer is standing there. */
+    @GetMapping("/reader-status")
+    public ResponseEntity<ApiResponse<PosReaderStatus>> readerStatus() {
+        return ResponseEntity.ok(ApiResponse.ok(posService.readerStatus()));
     }
 
     @GetMapping("/orders/{displayId}")

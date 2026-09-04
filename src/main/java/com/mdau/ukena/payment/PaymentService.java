@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.order.Order;
+import com.mdau.ukena.order.OrderChannel;
 import com.mdau.ukena.order.OrderItem;
 import com.mdau.ukena.order.OrderRepository;
 import com.mdau.ukena.order.OrderStatus;
@@ -12,8 +13,11 @@ import com.mdau.ukena.pos.StripeTerminalService;
 import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.user.UserRepository;
+import com.stripe.model.PaymentIntent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import static com.mdau.ukena.order.OrderService.WALK_IN_EMAIL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -112,12 +116,15 @@ public class PaymentService {
                         () -> log.warn("Stripe: order not found displayId={}", displayId));
 
             } else if ("payment_intent.succeeded".equalsIgnoreCase(event)) {
-                // POS (Terminal, server-driven) completion — online Checkout payments
-                // complete via checkout.session.completed above, so this only fires
-                // for POS PaymentIntents, which carry display_id in their own metadata.
+                // POS (Terminal, server-driven) completion. A Checkout Session's own
+                // PaymentIntent also emits this event, but never carries our display_id
+                // metadata (that's set on the Session, not the PI Checkout creates) —
+                // gate on it being present so an online sale doesn't log a spurious
+                // "order not found" warning below.
                 String paymentIntentId = node.path("data").path("object").path("id").asText();
                 String displayId = node.path("data").path("object")
                         .path("metadata").path("display_id").asText();
+                if (displayId == null || displayId.isBlank()) return;
 
                 orderRepository.findByDisplayId(displayId).ifPresentOrElse(
                         order -> {
@@ -125,6 +132,63 @@ public class PaymentService {
                             markOrderPaid(order, paymentIntentId);
                         },
                         () -> log.warn("Stripe: POS order not found displayId={}", displayId));
+
+            } else if ("payment_intent.payment_failed".equalsIgnoreCase(event)) {
+                JsonNode pi = node.path("data").path("object");
+                String displayId = pi.path("metadata").path("display_id").asText();
+                String paymentIntentId = pi.path("id").asText();
+                String reason = pi.path("last_payment_error").path("message").asText("Card declined");
+                resolveOrderForTerminalEvent(displayId, paymentIntentId)
+                        .ifPresent(order -> recordChargeFailure(order, reason));
+
+            } else if ("terminal.reader.action_failed".equalsIgnoreCase(event)) {
+                JsonNode action = node.path("data").path("object").path("action");
+                String paymentIntentId = action.path("process_payment_intent").path("payment_intent").asText();
+                String failureCode = action.path("failure_code").asText("");
+                JsonNode apiError = action.path("api_error");
+                // Stripe: an api_error of type "card_error" is safe to show the cardholder
+                // verbatim; anything else could leak internal detail, so map by failure_code
+                // instead. https://docs.stripe.com/terminal/features/manage-reader/reader-webhooks
+                String reason;
+                if ("card_error".equalsIgnoreCase(apiError.path("type").asText())) {
+                    reason = apiError.path("message").asText("Card declined");
+                } else {
+                    reason = switch (failureCode) {
+                        case "customer_canceled" -> "Cancelled on the reader";
+                        case "connection_error" -> "The reader lost connection — check whether the payment actually went through";
+                        default -> failureCode.isBlank() ? "The reader could not complete the sale" : failureCode;
+                    };
+                }
+                resolveOrderForTerminalEvent(null, paymentIntentId).ifPresentOrElse(
+                        order -> {
+                            // A connection_error is an explicit false negative in Stripe's own
+                            // docs — the charge may have actually gone through. Check before
+                            // giving up on it.
+                            if ("connection_error".equals(failureCode)) {
+                                PaymentIntent pi = stripeTerminalService.retrievePaymentIntent(paymentIntentId);
+                                if ("succeeded".equals(pi.getStatus())) {
+                                    if (order.getStatus() != OrderStatus.PAID) markOrderPaid(order, paymentIntentId);
+                                    return;
+                                }
+                            }
+                            recordChargeFailure(order, reason);
+                        },
+                        () -> log.warn("Stripe: reader action_failed for unknown intent={}", paymentIntentId));
+
+            } else if ("charge.refunded".equalsIgnoreCase(event)) {
+                // Bookkeeping only — catches a refund initiated directly from the Stripe
+                // Dashboard rather than through OrderService.adminRefund, so Order.refundedPence
+                // doesn't silently drift from what actually happened at the gateway.
+                JsonNode charge = node.path("data").path("object");
+                String paymentIntentId = charge.path("payment_intent").asText();
+                int amountRefunded = charge.path("amount_refunded").asInt(0);
+                resolveOrderForTerminalEvent(null, paymentIntentId).ifPresent(order -> {
+                    Integer current = order.getRefundedPence();
+                    if (current != null && current >= amountRefunded) return; // already reflected
+                    order.setRefundedPence(amountRefunded);
+                    if (amountRefunded >= order.getTotalPence()) order.setStatus(OrderStatus.CANCELLED);
+                    orderRepository.save(order);
+                });
             }
         } catch (Exception e) {
             log.error("Stripe webhook parse error", e);
@@ -165,10 +229,40 @@ public class PaymentService {
         }
     }
 
+    /** Resolves a Terminal webhook back to its order — by display_id metadata when
+     *  present, else by the PaymentIntent id already persisted at charge time
+     *  (see PosService.charge). Some Terminal events (action_failed, charge.refunded)
+     *  never carry display_id at all, only the payment_intent id. */
+    private java.util.Optional<Order> resolveOrderForTerminalEvent(String displayId, String paymentIntentId) {
+        if (displayId != null && !displayId.isBlank()) {
+            java.util.Optional<Order> byDisplayId = orderRepository.findByDisplayId(displayId);
+            if (byDisplayId.isPresent()) return byDisplayId;
+        }
+        if (paymentIntentId == null || paymentIntentId.isBlank()) return java.util.Optional.empty();
+        return orderRepository.findByPaymentIntentId(paymentIntentId);
+    }
+
+    /** A declined/cancelled/failed charge — order stays PENDING (still chargeable),
+     *  but the reason is now visible to the POS operator instead of a silent timeout. */
+    private void recordChargeFailure(Order order, String reason) {
+        if (order.getStatus() == OrderStatus.PAID) return; // already succeeded elsewhere — ignore
+        order.setLastPaymentError(reason);
+        orderRepository.save(order);
+        log.info("Order {} charge failed: {}", order.getDisplayId(), reason);
+    }
+
     private void markOrderPaid(Order order, String gatewayRef) {
         order.setStatus(OrderStatus.PAID);
         order.setGatewayRef(gatewayRef);
         order.setPaidAt(Instant.now());
+        order.setLastPaymentError(null);
+        // A market-stall sale is a walk-out handover, not a shipment — land it terminal
+        // rather than leaving it to be walked PAID -> PREPARING -> SHIPPED -> DELIVERED
+        // by an admin (which would also email a buyer address that's a sentinel, not
+        // a real inbox, at every step in between).
+        if (order.getChannel() == OrderChannel.POS) {
+            order.setStatus(OrderStatus.DELIVERED);
+        }
         orderRepository.save(order);
 
         for (OrderItem item : order.getItems()) {
@@ -187,12 +281,16 @@ public class PaymentService {
                     order.getDisplayId(), e.getMessage());
         }
 
-        emailService.sendOrderConfirmation(
-                order.getBuyerEmail(), order.getBuyerFullName(),
-                order.getDisplayId(), order.getTotalPence(),
-                order.getItems().stream()
-                        .map(OrderItem::getCreatorFullName).distinct()
-                        .collect(Collectors.joining(", ")));
+        // Anonymous POS sale (no customer email given) — WALK_IN_EMAIL is a NOT NULL
+        // sentinel on the column, never a real inbox to send mail to.
+        if (!WALK_IN_EMAIL.equalsIgnoreCase(order.getBuyerEmail())) {
+            emailService.sendOrderConfirmation(
+                    order.getBuyerEmail(), order.getBuyerFullName(),
+                    order.getDisplayId(), order.getTotalPence(),
+                    order.getItems().stream()
+                            .map(OrderItem::getCreatorFullName).distinct()
+                            .collect(Collectors.joining(", ")));
+        }
 
         sendCreatorNotifications(order);
         log.info("Order {} marked PAID via {}", order.getDisplayId(), gatewayRef);

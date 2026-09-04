@@ -98,9 +98,13 @@ public class OrderController {
     @PatchMapping("/admin/orders/{displayId}/refund")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<OrderDto>> adminRefund(
-            @PathVariable String displayId) {
+            @PathVariable String displayId,
+            @RequestBody(required = false) RefundOrderRequest req,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        Integer amountPence = req != null ? req.amountPence() : null;
         return ResponseEntity.ok(ApiResponse.ok(
-                orderService.adminRefund(displayId)));
+                orderService.adminRefund(displayId, amountPence, currentUser),
+                "Order refunded"));
     }
 
     @PatchMapping("/admin/orders/{displayId}/status")

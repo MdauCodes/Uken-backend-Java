@@ -122,6 +122,15 @@ public interface ProductRepository extends JpaRepository<Product, String> {
     """)
     int decrementStock(@Param("id") String id, @Param("qty") int qty);
 
+    /** The refund-side mirror of decrementStock — atomic, and only touches tracked
+     *  stock (an untracked product's unitsAvailable stays NULL, same convention). */
+    @Modifying
+    @Query("""
+        UPDATE Product p SET p.unitsAvailable = p.unitsAvailable + :qty
+        WHERE p.id = :id AND p.unitsAvailable IS NOT NULL
+    """)
+    int restock(@Param("id") String id, @Param("qty") int qty);
+
     /** Active, creator-owned (not Uken catalogue) products still missing a weight —
      *  the pool the weight-reminder email is sent for. */
     @Query("""

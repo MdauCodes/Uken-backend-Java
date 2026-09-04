@@ -44,6 +44,14 @@ public class PayoutUpdateService {
                 });
     }
 
+    /** A refund reversing a still-PENDING ledger entry — subtracts the same net amount
+     *  back out of the creator's pending balance. Clamped at zero: if the balance was
+     *  already drawn down by an unrelated payout run between charge and refund, this
+     *  is a "best effort correction," never a negative pending balance. */
+    public void reversePendingPayout(String creatorId, int netAmount, String displayId) {
+        retryUpdate(creatorId, -netAmount, displayId);
+    }
+
     private void retryUpdate(String creatorId, int netTotal, String displayId) {
         // Get the Spring-proxied version of this bean so @Transactional(REQUIRES_NEW) is honoured
         PayoutUpdateService proxy = applicationContext.getBean(PayoutUpdateService.class);
@@ -85,7 +93,7 @@ public class PayoutUpdateService {
             return;
         }
 
-        payout.setPendingPence(payout.getPendingPence() + netTotal);
+        payout.setPendingPence(Math.max(0, payout.getPendingPence() + netTotal));
         payoutRepository.saveAndFlush(payout);
         log.info("Payout updated for creator={} net={} (order={})", creatorId, netTotal, displayId);
     }

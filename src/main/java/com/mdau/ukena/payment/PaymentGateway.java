@@ -31,4 +31,13 @@ public interface PaymentGateway {
      * Amount is in pence; implementation converts to target currency.
      */
     PayoutResult initiateTransfer(PayoutRequest request);
+
+    /**
+     * Refund a completed charge, full or partial. {@code gatewayRef} is whatever
+     * {@code Order} already carries for this order — a Stripe Checkout Session id,
+     * a Stripe Terminal PaymentIntent id, or a Paystack transaction reference;
+     * each implementation resolves its own ref shape. {@code amountPence} null
+     * means a full refund.
+     */
+    RefundResult refund(RefundRequest request);
 }

@@ -1,17 +1,27 @@
 package com.mdau.ukena.order;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mdau.ukena.audit.AuditLogService;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.delivery.DeliveryZone;
 import com.mdau.ukena.delivery.DeliveryZoneService;
 import com.mdau.ukena.notification.EmailService;
 import com.mdau.ukena.order.dto.*;
+import com.mdau.ukena.payment.EarningsLedger;
+import com.mdau.ukena.payment.EarningsLedgerRepository;
+import com.mdau.ukena.payment.LedgerStatus;
+import com.mdau.ukena.payment.PaymentGateway;
+import com.mdau.ukena.payment.PayoutUpdateService;
+import com.mdau.ukena.payment.RefundRequest;
+import com.mdau.ukena.payment.RefundResult;
 import com.mdau.ukena.product.Product;
 import com.mdau.ukena.product.ProductRepository;
+import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.product.ProductStatus;
 import com.mdau.ukena.product.dto.ProductCategoryDto;
 import com.mdau.ukena.promo.PromoCode;
 import com.mdau.ukena.promo.PromoCodeService;
+import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.shipping.ShippingSettings;
 import com.mdau.ukena.shipping.ShippingSettingsService;
 import com.mdau.ukena.user.User;
@@ -21,6 +31,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -35,6 +46,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
+    /** Sentinel buyerEmail for an anonymous POS sale (no customer email given) — Order.buyerEmail
+     *  is NOT NULL, so this fills the column without implying a real address. Never send mail here. */
+    public static final String WALK_IN_EMAIL = "walk-in@ukena.co.uk";
+
     private final OrderRepository        orderRepository;
     private final ProductRepository      productRepository;
     private final UserRepository         userRepository;
@@ -43,6 +58,11 @@ public class OrderService {
     private final PromoCodeService       promoCodeService;
     private final ObjectMapper           objectMapper;
     private final EmailService           emailService;
+    private final PaymentGateway         paymentGateway;
+    private final EarningsLedgerRepository ledgerRepository;
+    private final PayoutUpdateService    payoutUpdateService;
+    private final ProductService         productService;
+    private final AuditLogService        auditLogService;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
@@ -149,6 +169,12 @@ public class OrderService {
                                 ? product.getName() + " is currently out of stock"
                                 : product.getName() + " is not available for purchase");
             }
+            // Seeded demo/placeholder listings have no real fulfillment behind them — the
+            // storefront already blocks add-to-cart on these; POS must too, in case one is
+            // ever accidentally flipped ACTIVE by an admin.
+            if (product.isDemoProduct()) {
+                throw ApiException.badRequest(product.getName() + " is a preview listing and can't be sold");
+            }
             if (product.getUnitsAvailable() != null && itemReq.quantity() > product.getUnitsAvailable()) {
                 throw ApiException.badRequest(
                         "Only " + product.getUnitsAvailable() + " of " + product.getName() + " left in stock");
@@ -174,7 +200,7 @@ public class OrderService {
                 .buyerFullName(customerFullName != null && !customerFullName.isBlank()
                         ? customerFullName.trim() : "Walk-in customer")
                 .buyerEmail(customerEmail != null && !customerEmail.isBlank()
-                        ? customerEmail.toLowerCase().trim() : "walk-in@ukena.co.uk")
+                        ? customerEmail.toLowerCase().trim() : WALK_IN_EMAIL)
                 .shippingPence(0)
                 .deliveryZoneId(null)
                 .totalPence(totalPence)
@@ -257,13 +283,103 @@ public class OrderService {
         return toDto(orderRepository.save(order));
     }
 
+    /**
+     * Real refund: actually reverses the Stripe/Paystack charge, restores tracked
+     * stock, and reverses each item's ledger entry — not just a local status flip.
+     * amountPence null = full refund of whatever hasn't already been refunded.
+     *
+     * If the gateway call fails, nothing else happens — never mark an order
+     * refunded (or touch stock/ledger) without money actually moving.
+     */
     @Transactional
-    public OrderDto adminRefund(String displayId) {
+    public OrderDto adminRefund(String displayId, Integer amountPence, CurrentUser actor) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found"));
+
+        if (order.getStatus() != OrderStatus.PAID
+                && order.getStatus() != OrderStatus.PREPARING
+                && order.getStatus() != OrderStatus.SHIPPED
+                && order.getStatus() != OrderStatus.DELIVERED) {
+            throw ApiException.badRequest(
+                    "Only a paid order can be refunded (this one is " + order.getStatus() + ")");
+        }
+        int alreadyRefunded = order.getRefundedPence() != null ? order.getRefundedPence() : 0;
+        if (alreadyRefunded >= order.getTotalPence()) {
+            throw ApiException.badRequest("This order has already been fully refunded");
+        }
+        int refundAmount = amountPence != null ? amountPence : (order.getTotalPence() - alreadyRefunded);
+        if (refundAmount <= 0 || refundAmount > order.getTotalPence() - alreadyRefunded) {
+            throw ApiException.badRequest("Invalid refund amount");
+        }
+
+        // POS/Terminal orders carry their own PaymentIntent; online orders resolve
+        // through the Checkout Session gatewayRef — StripeGateway.refund() handles both.
+        String ref = order.getPaymentIntentId() != null ? order.getPaymentIntentId() : order.getGatewayRef();
+        if (ref == null || ref.isBlank())
+            throw ApiException.badRequest("This order has no payment reference to refund");
+
+        RefundResult result = paymentGateway.refund(new RefundRequest(displayId, ref, refundAmount));
+        if (!result.success())
+            throw ApiException.badRequest("Refund failed: " + result.message());
+
+        boolean isFullRefund = refundAmount == order.getTotalPence() - alreadyRefunded;
+        for (OrderItem item : order.getItems()) {
+            if (item.getProduct() == null) continue;
+            // Partial refunds don't try to guess which item(s) — stock/ledger reversal
+            // only happens on a full refund. A partial (e.g. "one of these three is
+            // faulty") needs the operator to separately note which item, out of scope here.
+            if (!isFullRefund) continue;
+            productService.restock(item.getProduct().getId(), item.getQuantity());
+            reverseLedgerEntry(item, order);
+        }
+
         order.setStatus(OrderStatus.CANCELLED);
-        log.info("Order {} cancelled by admin", displayId);
-        return toDto(orderRepository.save(order));
+        order.setRefundedAt(Instant.now());
+        order.setRefundedPence(alreadyRefunded + refundAmount);
+        orderRepository.save(order);
+
+        auditLogService.record(actor, "ORDER_REFUNDED", "Order", displayId, displayId,
+                "Refunded " + refundAmount + "p (" + (isFullRefund ? "full" : "partial") + ") via " + result.gatewayRefundRef());
+
+        if (!WALK_IN_EMAIL.equalsIgnoreCase(order.getBuyerEmail())) {
+            emailService.sendOrderStatusUpdate(
+                    order.getBuyerEmail(), order.getBuyerFullName(), displayId, "REFUNDED");
+        }
+
+        log.info("Order {} refunded: {}p via {}", displayId, refundAmount, result.gatewayRefundRef());
+        return toDto(order);
+    }
+
+    /** Reverses one item's ledger entry, but only when the money hasn't actually left
+     *  the platform yet. A real creator entry already PAID means an external payout
+     *  already happened — auto-clawback isn't attempted here (needs a human, this is
+     *  flagged loudly); a still-PENDING entry (creator or Uken's own immediate-PAID
+     *  revenue recognition, which never leaves the platform externally) reverses safely. */
+    private void reverseLedgerEntry(OrderItem item, Order order) {
+        if (item.getCreator() == null) return;
+        boolean isUkenItem = ProductService.UKENA_CREATOR_ID.equals(item.getCreator().getId());
+
+        List<EarningsLedger> entries = ledgerRepository.findByOrderId(order.getId()).stream()
+                .filter(e -> e.getOrderItemId().equals(item.getId()))
+                .toList();
+
+        for (EarningsLedger entry : entries) {
+            if (entry.getStatus() == LedgerStatus.REVERSED) continue;
+            if (!isUkenItem && entry.getStatus() == LedgerStatus.PAID) {
+                log.warn("Order {} refunded but creator={} was already paid out {}p for this item — "
+                                + "needs manual clawback, not reversed automatically",
+                        order.getDisplayId(), item.getCreator().getId(), entry.getNetPence());
+                continue;
+            }
+            boolean wasPending = entry.getStatus() == LedgerStatus.PENDING
+                    || entry.getStatus() == LedgerStatus.INCLUDED_IN_PAYOUT;
+            entry.setStatus(LedgerStatus.REVERSED);
+            ledgerRepository.save(entry);
+            if (!isUkenItem && wasPending) {
+                payoutUpdateService.reversePendingPayout(
+                        item.getCreator().getId(), entry.getNetPence(), order.getDisplayId());
+            }
+        }
     }
 
     private void validateTransition(OrderStatus current, OrderStatus next) {
@@ -326,7 +442,9 @@ public class OrderService {
                 o.getPromoCode(), o.getDiscountPence() != null ? o.getDiscountPence() : 0,
                 o.getTotalPence(),
                 new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
-                items, parseDelivery(o.getDelivery()));
+                items, parseDelivery(o.getDelivery()),
+                o.getLastPaymentError(),
+                o.getRefundedPence() != null ? o.getRefundedPence() : 0);
     }
 
 
@@ -338,9 +456,11 @@ public class OrderService {
         validateAdminTransition(order.getStatus(), next);
         order.setStatus(next);
         Order saved = orderRepository.save(order);
-        emailService.sendOrderStatusUpdate(
-                saved.getBuyerEmail(), saved.getBuyerFullName(),
-                saved.getDisplayId(), next.name());
+        if (!WALK_IN_EMAIL.equalsIgnoreCase(saved.getBuyerEmail())) {
+            emailService.sendOrderStatusUpdate(
+                    saved.getBuyerEmail(), saved.getBuyerFullName(),
+                    saved.getDisplayId(), next.name());
+        }
         return toDto(saved);
     }
 

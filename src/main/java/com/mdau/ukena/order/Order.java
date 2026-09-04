@@ -83,8 +83,30 @@ public class Order {
     @Column(name = "gateway_ref", length = 120)
     private String gatewayRef;
 
+    /** The live Stripe Terminal PaymentIntent for this order, set BEFORE dispatch
+     *  (not after success, unlike gatewayRef) — lets charge() reuse/inspect the
+     *  same intent on retry instead of creating a second one (the double-charge
+     *  risk a naive retry would otherwise carry), and lets a webhook that arrives
+     *  with no display_id metadata still resolve back to this order. Cleared once
+     *  the intent is cancelled or the order is refunded. */
+    @Column(name = "payment_intent_id", length = 120)
+    private String paymentIntentId;
+
+    /** Human-readable reason the last charge attempt failed/was declined/was
+     *  cancelled — null once/unless a charge attempt has failed. Surfaced
+     *  directly to the POS operator instead of a generic timeout message. */
+    @Column(name = "last_payment_error", columnDefinition = "TEXT")
+    private String lastPaymentError;
+
     @Column(name = "paid_at")
     private Instant paidAt;
+
+    @Column(name = "refunded_at")
+    private Instant refundedAt;
+
+    /** Total refunded so far, in pence — supports partial refunds. Null/0 = no refund. */
+    @Column(name = "refunded_pence")
+    private Integer refundedPence;
 
     @Column(name = "reminder_sent_at")
     private Instant reminderSentAt;
