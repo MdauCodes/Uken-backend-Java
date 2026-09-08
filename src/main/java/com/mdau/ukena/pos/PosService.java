@@ -11,6 +11,7 @@ import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
 import com.mdau.ukena.pos.dto.PosReaderStatus;
 import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.product.dto.ProductDto;
+import com.mdau.ukena.product.dto.ProductSummaryDto;
 import com.stripe.model.PaymentIntent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,12 @@ public class PosService {
      *  that are deliberately hidden from the public shop. */
     public List<ProductDto> browseProducts() {
         return productService.browseForPos();
+    }
+
+    /** POS search — reaches beyond Uken's own catalogue, demo/preview listings
+     *  excluded (see ProductRepository.searchForPos). */
+    public List<ProductSummaryDto> searchProducts(String q, int size) {
+        return productService.searchForPos(q, size);
     }
 
     public OrderDto createOrder(PosOrderRequest req) {

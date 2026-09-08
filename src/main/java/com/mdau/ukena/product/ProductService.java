@@ -89,6 +89,23 @@ public class ProductService {
                 .stream().map(this::toDto).toList();
     }
 
+    /** POS search — reaches beyond Uken's own catalogue into other creators' real
+     *  work, with demo/preview listings excluded (see ProductRepository.searchForPos). */
+    @Transactional(readOnly = true)
+    public List<ProductSummaryDto> searchForPos(String q, int size) {
+        return productRepository.searchForPos(q, PageRequest.of(0, size))
+                .getContent().stream()
+                .map(p -> new ProductSummaryDto(
+                        p.getId(),
+                        p.getName(),
+                        p.getPricePence(),
+                        p.getHeroImage(),
+                        p.getCreator() != null ? p.getCreator().getId()       : null,
+                        p.getCreator() != null ? p.getCreator().getFullName() : null,
+                        p.getCreator() != null ? p.getCreator().getCraft()    : null))
+                .toList();
+    }
+
     /** Admin moderation queue — every product regardless of status or soft-delete. */
     @Transactional(readOnly = true)
     public List<ProductDto> listAllForAdmin() {

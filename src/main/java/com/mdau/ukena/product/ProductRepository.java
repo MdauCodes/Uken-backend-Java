@@ -28,15 +28,37 @@ public interface ProductRepository extends JpaRepository<Product, String> {
             Pageable pageable);
 
     /** POS browse grid — Uken's own catalogue only, ACTIVE only, but deliberately
-     *  ignores availableOnline: market-only pieces must still be sellable at the stall. */
+     *  ignores availableOnline: market-only pieces must still be sellable at the stall.
+     *  Demo/preview listings ARE excluded here — unlike the public storefront (which
+     *  deliberately shows them to fill out the catalogue and only blocks them at
+     *  checkout), a POS operator has no use for a tile that will just error on tap. */
     @Query("""
         SELECT p FROM Product p
         WHERE p.deletedAt IS NULL
         AND p.creator.id = :creatorId
         AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND (p.demo IS NULL OR p.demo = false)
         ORDER BY p.name ASC
     """)
     List<Product> browseForPos(@Param("creatorId") String creatorId);
+
+    /** POS-only search — reaches beyond the stall's own catalogue into other
+     *  creators' real work, same as the public /search endpoint, but (a) excludes
+     *  demo/preview listings for the same reason browseForPos does, and (b) ignores
+     *  availableOnline like browseForPos, so a market-only piece is still findable.
+     *  Deliberately separate from ProductRepository.search — that one stays
+     *  unchanged so the public storefront keeps showing demo products for browsing. */
+    @Query("""
+        SELECT p FROM Product p
+        JOIN FETCH p.creator c
+        WHERE p.deletedAt IS NULL
+        AND p.status = com.mdau.ukena.product.ProductStatus.ACTIVE
+        AND (p.demo IS NULL OR p.demo = false)
+        AND (LOWER(p.name)       LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(p.pieceStory) LIKE LOWER(CONCAT('%', :q, '%')) OR
+             LOWER(c.craft)      LIKE LOWER(CONCAT('%', :q, '%')))
+    """)
+    Page<Product> searchForPos(@Param("q") String q, Pageable pageable);
 
     @Query("""
         SELECT p FROM Product p

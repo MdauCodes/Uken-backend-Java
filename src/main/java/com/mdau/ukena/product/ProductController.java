@@ -182,8 +182,11 @@ public class ProductController {
 
     // ── Admin: Uken catalogue management ─────────────────────
 
+    // Also reachable by SUPPORT, not just ADMIN — a till-runner needs to be able
+    // to snap-and-list a market-only piece on the spot (see PosController, same
+    // role pairing) without needing a full admin login.
     @PostMapping("/admin/catalogue")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPPORT')")
     public ResponseEntity<ApiResponse<ProductDto>> catalogueCreate(
             @Valid @RequestBody AdminProductCreateRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)

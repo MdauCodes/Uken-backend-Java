@@ -6,6 +6,7 @@ import com.mdau.ukena.pos.dto.PosOrderRequest;
 import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
 import com.mdau.ukena.pos.dto.PosReaderStatus;
 import com.mdau.ukena.product.dto.ProductDto;
+import com.mdau.ukena.product.dto.ProductSummaryDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,15 @@ public class PosController {
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<List<ProductDto>>> products() {
         return ResponseEntity.ok(ApiResponse.ok(posService.browseProducts()));
+    }
+
+    /** Reaches beyond the stall's own catalogue into other creators' real work —
+     *  demo/preview listings excluded, unlike the public /search endpoint. */
+    @GetMapping("/products/search")
+    public ResponseEntity<ApiResponse<List<ProductSummaryDto>>> searchProducts(
+            @RequestParam String q,
+            @RequestParam(defaultValue = "12") int size) {
+        return ResponseEntity.ok(ApiResponse.ok(posService.searchProducts(q, size)));
     }
 
     @PostMapping("/orders")
