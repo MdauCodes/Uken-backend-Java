@@ -110,7 +110,12 @@ public class PaymentService {
 
                 orderRepository.findByDisplayId(displayId).ifPresentOrElse(
                         order -> {
-                            if (order.getStatus() == OrderStatus.PAID) return;
+                            // Stripe explicitly redelivers webhooks — PENDING is the only
+                            // pre-payment state, so anything else means this already
+                            // landed (and for POS specifically, moves straight past PAID
+                            // to DELIVERED, so checking only "== PAID" would miss that and
+                            // reprocess: double stock decrement, double ledger credit).
+                            if (order.getStatus() != OrderStatus.PENDING) return;
                             markOrderPaid(order, sessionId);
                         },
                         () -> log.warn("Stripe: order not found displayId={}", displayId));
@@ -128,7 +133,9 @@ public class PaymentService {
 
                 orderRepository.findByDisplayId(displayId).ifPresentOrElse(
                         order -> {
-                            if (order.getStatus() == OrderStatus.PAID) return;
+                            // See the identical comment above — a completed POS order is
+                            // DELIVERED, not PAID, so the guard must cover both.
+                            if (order.getStatus() != OrderStatus.PENDING) return;
                             markOrderPaid(order, paymentIntentId);
                         },
                         () -> log.warn("Stripe: POS order not found displayId={}", displayId));
@@ -167,7 +174,7 @@ public class PaymentService {
                             if ("connection_error".equals(failureCode)) {
                                 PaymentIntent pi = stripeTerminalService.retrievePaymentIntent(paymentIntentId);
                                 if ("succeeded".equals(pi.getStatus())) {
-                                    if (order.getStatus() != OrderStatus.PAID) markOrderPaid(order, paymentIntentId);
+                                    if (order.getStatus() == OrderStatus.PENDING) markOrderPaid(order, paymentIntentId);
                                     return;
                                 }
                             }
@@ -215,7 +222,7 @@ public class PaymentService {
 
             orderRepository.findByDisplayId(displayId).ifPresentOrElse(
                     order -> {
-                        if (order.getStatus() == OrderStatus.PAID) return;
+                        if (order.getStatus() != OrderStatus.PENDING) return;
                         if (paymentGateway.verifyPayment(reference)) {
                             markOrderPaid(order, reference);
                         } else {
@@ -245,7 +252,10 @@ public class PaymentService {
     /** A declined/cancelled/failed charge — order stays PENDING (still chargeable),
      *  but the reason is now visible to the POS operator instead of a silent timeout. */
     private void recordChargeFailure(Order order, String reason) {
-        if (order.getStatus() == OrderStatus.PAID) return; // already succeeded elsewhere — ignore
+        // A stale/redelivered failure notification for an order that already succeeded
+        // (POS lands on DELIVERED, not PAID) must never overwrite a real success with
+        // a leftover error message.
+        if (order.getStatus() != OrderStatus.PENDING) return;
         order.setLastPaymentError(reason);
         orderRepository.save(order);
         log.info("Order {} charge failed: {}", order.getDisplayId(), reason);

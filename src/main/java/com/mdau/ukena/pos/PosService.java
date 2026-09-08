@@ -53,8 +53,16 @@ public class PosService {
      * first attempt actually went through; re-dispatching the SAME intent is required
      * instead. The order stays PENDING until the payment_intent.succeeded webhook
      * lands (see PaymentService) — the POS page polls getOrder() to find out.
+     *
+     * Deliberately NOT @Transactional. dispatchToReader() throws on the single most
+     * common failure (reader offline/busy) — with a surrounding transaction, that
+     * exception would roll back the order.setPaymentIntentId() save a few lines
+     * above, silently undoing the "persist before dispatch" guarantee exactly when
+     * it matters (a webhook or the next retry would find paymentIntentId still
+     * null). Each repository call below is transactional on its own by default
+     * with no enclosing transaction, so the persist genuinely commits before
+     * dispatch is attempted, regardless of how dispatch turns out.
      */
-    @Transactional
     public PosPaymentIntentResponse charge(String displayId) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
@@ -100,13 +108,16 @@ public class PosService {
 
     /** The operator's escape hatch for a stuck reader prompt (customer walked away,
      *  mis-rung sale) — cancels both the reader-side action and the PaymentIntent so
-     *  the next charge attempt starts clean instead of failing with terminal_reader_busy. */
+     *  the next charge attempt starts clean instead of failing with terminal_reader_busy.
+     *  No-ops the local cleanup if the order already succeeded (a slow webhook could
+     *  race with an operator tapping cancel) — never null out paymentIntentId on a
+     *  completed order, since that's a real reference a later refund still needs. */
     @Transactional
     public void cancelCharge(String displayId) {
         Order order = orderRepository.findByDisplayId(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
         stripeTerminalService.cancelReaderAction();
-        if (order.getPaymentIntentId() != null) {
+        if (order.getStatus() == OrderStatus.PENDING && order.getPaymentIntentId() != null) {
             stripeTerminalService.cancelPaymentIntent(order.getPaymentIntentId());
             order.setPaymentIntentId(null);
             orderRepository.save(order);

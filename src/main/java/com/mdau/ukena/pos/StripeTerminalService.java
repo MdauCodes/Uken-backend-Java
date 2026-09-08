@@ -125,18 +125,20 @@ public class StripeTerminalService {
 
     /** The operator's escape hatch for a stuck reader prompt (customer walked away, or
      *  the operator mis-rang the sale) — without this, the NEXT charge attempt fails with
-     *  terminal_reader_busy since the reader considers itself still mid-action. */
+     *  terminal_reader_busy since the reader considers itself still mid-action.
+     *
+     *  Deliberately swallows every failure rather than surfacing one, including a
+     *  reader that was already idle (no exact, documented error code to match that
+     *  case reliably) — this call's only job is best-effort cleanup, and if it
+     *  genuinely didn't work, the very next charge attempt already reports that
+     *  clearly via dispatchToReader's own terminal_reader_busy message. Throwing
+     *  here would just block that self-correcting retry for no safety benefit. */
     public void cancelReaderAction() {
-        requireReaderConfigured();
+        if (readerId == null || readerId.isBlank()) return;
         try {
             Reader.retrieve(readerId).cancelAction(ReaderCancelActionParams.builder().build());
         } catch (StripeException e) {
-            // Already idle is not a real failure — the operator's intent (get the
-            // reader back to a clean state) is already satisfied.
-            if (!isReaderIdleError(e)) {
-                log.error("Stripe Terminal cancel-action error", e);
-                throw ApiException.badRequest(mapReaderError(e));
-            }
+            log.warn("Stripe Terminal cancel-action failed (continuing): {}", e.getMessage());
         }
     }
 
@@ -193,11 +195,6 @@ public class StripeTerminalService {
         if (readerId == null || readerId.isBlank())
             throw ApiException.internalError(
                     "No card reader configured — set ukena.stripe.terminal.reader-id once the reader is registered in the Stripe Dashboard");
-    }
-
-    private boolean isReaderIdleError(StripeException e) {
-        String code = e.getCode();
-        return code != null && (code.contains("no_action") || code.contains("nothing_to_cancel"));
     }
 
     /** Translates the handful of reader-specific error codes Stripe documents into
