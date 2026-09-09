@@ -12,6 +12,7 @@ import com.stripe.net.Webhook;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.RefundCreateParams;
+import com.stripe.param.RefundListParams;
 import com.stripe.param.terminal.ReaderCancelActionParams;
 import com.stripe.param.terminal.ReaderProcessPaymentIntentParams;
 import jakarta.annotation.PostConstruct;
@@ -174,6 +175,25 @@ public class StripeTerminalService {
         } catch (StripeException e) {
             log.error("Stripe Terminal refund error for intent {}", paymentIntentId, e);
             throw ApiException.badRequest("Could not process the refund: " + e.getMessage());
+        }
+    }
+
+    /** Whether ANY refund has ever been recorded against this PaymentIntent. A refunded
+     *  PaymentIntent's own `status` stays "succeeded" — Stripe never flips it back — so
+     *  this is the only reliable way to tell a genuinely-fresh success apart from one
+     *  that was already reversed (e.g. by hand in the Stripe Dashboard) before the
+     *  reconcile fallback got to it. Fails safe (assumes no refund) on a Stripe error,
+     *  same posture as the rest of this service's non-critical lookups. */
+    public boolean hasRefund(String paymentIntentId) {
+        try {
+            RefundListParams params = RefundListParams.builder()
+                    .setPaymentIntent(paymentIntentId)
+                    .setLimit(1L)
+                    .build();
+            return !Refund.list(params).getData().isEmpty();
+        } catch (StripeException e) {
+            log.warn("Stripe Terminal refund-check failed for {} (assuming none): {}", paymentIntentId, e.getMessage());
+            return false;
         }
     }
 

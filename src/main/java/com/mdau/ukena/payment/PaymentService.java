@@ -236,6 +236,35 @@ public class PaymentService {
         }
     }
 
+    /**
+     * Best-effort fallback for when payment_intent.succeeded is slow, or never arrives
+     * at all (a missing subscription on the Stripe Dashboard's webhook endpoint, a
+     * rotated signing secret, an outage) — asks Stripe directly what really happened
+     * instead of leaving the order stuck PENDING forever with money already moved.
+     * Used by the POS page once its poll times out, and by its manual "Refresh status"
+     * action, so a card that was actually charged doesn't strand the sale invisibly.
+     *
+     * Idempotent and safe to call repeatedly: no-ops once the order is no longer
+     * PENDING (already resolved, by webhook or an earlier reconcile), and deliberately
+     * will NOT resurrect a PaymentIntent that's since been refunded (its `status` stays
+     * "succeeded" even after a refund — see StripeTerminalService.hasRefund) as a fresh
+     * paid sale.
+     */
+    @Transactional
+    public void reconcilePosOrder(String displayId) {
+        Order order = orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
+        if (order.getStatus() != OrderStatus.PENDING) return;
+
+        String paymentIntentId = order.getPaymentIntentId();
+        if (paymentIntentId == null || paymentIntentId.isBlank()) return; // no charge attempted yet
+
+        PaymentIntent intent = stripeTerminalService.retrievePaymentIntent(paymentIntentId);
+        if ("succeeded".equals(intent.getStatus()) && !stripeTerminalService.hasRefund(paymentIntentId)) {
+            markOrderPaid(order, paymentIntentId);
+        }
+    }
+
     /** Resolves a Terminal webhook back to its order — by display_id metadata when
      *  present, else by the PaymentIntent id already persisted at charge time
      *  (see PosService.charge). Some Terminal events (action_failed, charge.refunded)

@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,4 +46,27 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     @Query("SELECT COUNT(o) FROM Order o WHERE o.status = com.mdau.ukena.order.OrderStatus.PAID")
     long countPaidOrders();
+
+    /** One row per calendar day (Europe/London — where the physical stalls trade,
+     *  regardless of what timezone the server itself runs in) that had at least one
+     *  completed POS sale. Backs the market-stall sales-history view — see
+     *  PosService.salesByDate, which turns "orderCount > 3" into a Market Day flag. */
+    interface PosSalesDayProjection {
+        LocalDate getSaleDate();
+        Long getOrderCount();
+        Long getTotalPence();
+    }
+
+    @Query(value = """
+            SELECT (o.paid_at AT TIME ZONE 'Europe/London')::date AS sale_date,
+                   COUNT(*)                                        AS order_count,
+                   COALESCE(SUM(o.total_pence), 0)                 AS total_pence
+            FROM orders o
+            WHERE o.channel = 'POS'
+              AND o.status IN ('PAID', 'DELIVERED')
+              AND o.paid_at IS NOT NULL
+            GROUP BY sale_date
+            ORDER BY sale_date DESC
+            """, nativeQuery = true)
+    List<PosSalesDayProjection> aggregatePosSalesByDate();
 }

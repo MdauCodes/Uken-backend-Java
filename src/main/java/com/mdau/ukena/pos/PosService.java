@@ -3,12 +3,15 @@ package com.mdau.ukena.pos;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.order.Order;
 import com.mdau.ukena.order.OrderRepository;
+import com.mdau.ukena.order.OrderRepository.PosSalesDayProjection;
 import com.mdau.ukena.order.OrderService;
 import com.mdau.ukena.order.OrderStatus;
 import com.mdau.ukena.order.dto.OrderDto;
+import com.mdau.ukena.payment.PaymentService;
 import com.mdau.ukena.pos.dto.PosOrderRequest;
 import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
 import com.mdau.ukena.pos.dto.PosReaderStatus;
+import com.mdau.ukena.pos.dto.PosSalesDayDto;
 import com.mdau.ukena.product.ProductService;
 import com.mdau.ukena.product.dto.ProductDto;
 import com.mdau.ukena.product.dto.ProductSummaryDto;
@@ -18,7 +21,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -29,6 +41,8 @@ public class PosService {
     private final OrderRepository orderRepository;
     private final ProductService productService;
     private final StripeTerminalService stripeTerminalService;
+    private final PaymentService paymentService;
+    private final MarketDayOverrideRepository marketDayOverrideRepository;
 
     /** Default POS browse grid — Uken's own catalogue, including market-only pieces
      *  that are deliberately hidden from the public shop. */
@@ -138,5 +152,84 @@ public class PosService {
 
     public OrderDto getOrder(String displayId) {
         return orderService.getByDisplayId(displayId);
+    }
+
+    /** Checks Stripe directly for this order's true payment status and settles it if
+     *  Stripe already says "succeeded" — see PaymentService.reconcilePosOrder. */
+    public OrderDto reconcile(String displayId) {
+        paymentService.reconcilePosOrder(displayId);
+        return orderService.getByDisplayId(displayId);
+    }
+
+    /** More than this many completed sales in one calendar day counts as a genuine
+     *  Market Day rather than a one-off in-person sale or two. */
+    private static final int MARKET_DAY_THRESHOLD = 3;
+
+    /** Completed market-stall sales grouped by the calendar day they happened on
+     *  (Europe/London, where the stalls trade), newest first — the sales-history view
+     *  the admin dashboard was missing entirely. A day past the threshold is flagged
+     *  as a Market Day; an admin can also flag one by hand (see markMarketDay) for a
+     *  day the threshold missed — a manually-flagged day with no completed sales at
+     *  all still shows up here, with a zero count. Every qualifying day gets a stable
+     *  sequence number (oldest qualifying day = 1), so "Market Day 7" reads the same
+     *  way even after more days are added later. */
+    public List<PosSalesDayDto> salesByDate() {
+        List<PosSalesDayProjection> aggregated = orderRepository.aggregatePosSalesByDate();
+        Map<LocalDate, PosSalesDayProjection> byDate = aggregated.stream()
+                .collect(Collectors.toMap(PosSalesDayProjection::getSaleDate, d -> d));
+        Set<LocalDate> manualDates = marketDayOverrideRepository.findAll().stream()
+                .map(MarketDayOverride::getDate)
+                .collect(Collectors.toSet());
+
+        Set<LocalDate> allDates = new TreeSet<>(Comparator.reverseOrder()); // newest first
+        allDates.addAll(byDate.keySet());
+        allDates.addAll(manualDates);
+
+        List<LocalDate> chronological = new ArrayList<>(allDates);
+        Collections.reverse(chronological); // oldest first, so numbering is stable
+        Map<LocalDate, Integer> marketDayNumbers = new HashMap<>();
+        int number = 0;
+        for (LocalDate date : chronological) {
+            long orderCount = orderCountFor(byDate, date);
+            if (orderCount > MARKET_DAY_THRESHOLD || manualDates.contains(date)) {
+                marketDayNumbers.put(date, ++number);
+            }
+        }
+
+        return allDates.stream()
+                .map(date -> {
+                    PosSalesDayProjection row = byDate.get(date);
+                    long orderCount = row != null ? row.getOrderCount() : 0;
+                    long totalPence = row != null ? row.getTotalPence() : 0;
+                    boolean manual = manualDates.contains(date);
+                    boolean isMarketDay = orderCount > MARKET_DAY_THRESHOLD || manual;
+                    return new PosSalesDayDto(
+                            date, orderCount, totalPence, isMarketDay,
+                            isMarketDay ? marketDayNumbers.get(date) : null, manual);
+                })
+                .toList();
+    }
+
+    private long orderCountFor(Map<LocalDate, PosSalesDayProjection> byDate, LocalDate date) {
+        PosSalesDayProjection row = byDate.get(date);
+        return row != null ? row.getOrderCount() : 0;
+    }
+
+    /** Admin override — calls a date a Market Day regardless of its actual sales
+     *  count. Idempotent. */
+    @Transactional
+    public void markMarketDay(LocalDate date) {
+        if (marketDayOverrideRepository.existsById(date)) return;
+        MarketDayOverride override = new MarketDayOverride();
+        override.setDate(date);
+        marketDayOverrideRepository.save(override);
+    }
+
+    /** Removes a manual Market Day flag. Only ever removes the override itself — a
+     *  day that separately qualifies via the sales threshold stays flagged, since
+     *  that part isn't a decision to undo. */
+    @Transactional
+    public void unmarkMarketDay(LocalDate date) {
+        marketDayOverrideRepository.deleteById(date);
     }
 }
