@@ -14,6 +14,10 @@ import com.mdau.ukena.payment.PaymentGateway;
 import com.mdau.ukena.payment.PayoutUpdateService;
 import com.mdau.ukena.payment.RefundRequest;
 import com.mdau.ukena.payment.RefundResult;
+import com.mdau.ukena.pos.MarketDay;
+import com.mdau.ukena.pos.MarketDayCatalogueItem;
+import com.mdau.ukena.pos.MarketDayCatalogueItemRepository;
+import com.mdau.ukena.pos.MarketDayRepository;
 import com.mdau.ukena.product.Product;
 import com.mdau.ukena.product.ProductRepository;
 import com.mdau.ukena.product.ProductService;
@@ -32,7 +36,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -63,6 +69,8 @@ public class OrderService {
     private final PayoutUpdateService    payoutUpdateService;
     private final ProductService         productService;
     private final AuditLogService        auditLogService;
+    private final MarketDayRepository    marketDayRepository;
+    private final MarketDayCatalogueItemRepository marketDayCatalogueItemRepository;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
@@ -160,6 +168,11 @@ public class OrderService {
         if (itemRequests == null || itemRequests.isEmpty())
             throw ApiException.badRequest("Cart is empty");
 
+        // Today's assigned MarketDayCatalogue (if any) reprices only the products it
+        // actually lists — anything sold outside it (search, "New item") still prices
+        // at the product's normal live rate. See MarketDay's own class comment.
+        Map<String, Integer> catalogueOverridePrices = todaysCatalogueOverridePrices();
+
         List<OrderItem> items = itemRequests.stream().map(itemReq -> {
             Product product = productRepository.findActiveById(itemReq.productId())
                     .orElseThrow(() -> ApiException.notFound("Product not found: " + itemReq.productId()));
@@ -179,12 +192,13 @@ public class OrderService {
                 throw ApiException.badRequest(
                         "Only " + product.getUnitsAvailable() + " of " + product.getName() + " left in stock");
             }
+            int pricePence = catalogueOverridePrices.getOrDefault(product.getId(), product.getPricePence());
             return OrderItem.builder()
                     .product(product)
                     .creator(product.getCreator())
                     .productName(product.getName())
                     .quantity(itemReq.quantity())
-                    .pricePence(product.getPricePence())
+                    .pricePence(pricePence)
                     .weightGrams(product.getWeightGrams())
                     .image(product.getHeroImage())
                     .creatorFullName(product.getCreator().getFullName())
@@ -213,6 +227,18 @@ public class OrderService {
         order.getItems().addAll(items);
         Order saved = orderRepository.save(order);
         return toDto(saved);
+    }
+
+    /** productId -> this catalogue's own price, for whichever MarketDayCatalogue is
+     *  assigned to today (Europe/London) — empty when there's no market day today or
+     *  it has no catalogue assigned, in which case every item just prices normally. */
+    private Map<String, Integer> todaysCatalogueOverridePrices() {
+        return marketDayRepository.findById(LocalDate.now(ZoneId.of("Europe/London")))
+                .map(MarketDay::getCatalogue)
+                .map(catalogue -> marketDayCatalogueItemRepository
+                        .findByCatalogue_IdOrderByProductNameAsc(catalogue.getId()).stream()
+                        .collect(Collectors.toMap(i -> i.getProduct().getId(), MarketDayCatalogueItem::getPricePence)))
+                .orElse(Map.of());
     }
 
     @Transactional(readOnly = true)

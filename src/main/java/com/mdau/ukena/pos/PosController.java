@@ -2,11 +2,18 @@ package com.mdau.ukena.pos;
 
 import com.mdau.ukena.common.ApiResponse;
 import com.mdau.ukena.order.dto.OrderDto;
+import com.mdau.ukena.pos.dto.AddCatalogueItemRequest;
+import com.mdau.ukena.pos.dto.CreateCatalogueRequest;
+import com.mdau.ukena.pos.dto.MarkMarketDayRequest;
+import com.mdau.ukena.pos.dto.MarketDayCatalogueDto;
+import com.mdau.ukena.pos.dto.MarketDayCatalogueSummaryDto;
+import com.mdau.ukena.pos.dto.PosBrowseItemDto;
 import com.mdau.ukena.pos.dto.PosOrderRequest;
 import com.mdau.ukena.pos.dto.PosPaymentIntentResponse;
+import com.mdau.ukena.pos.dto.PosProductSalesDto;
 import com.mdau.ukena.pos.dto.PosReaderStatus;
 import com.mdau.ukena.pos.dto.PosSalesDayDto;
-import com.mdau.ukena.product.dto.ProductDto;
+import com.mdau.ukena.pos.dto.UpdateCatalogueItemRequest;
 import com.mdau.ukena.product.dto.ProductSummaryDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 /** Market-stall POS — Stripe Terminal server-driven checkout against a smart
  *  reader (WisePOS E / Stripe Reader S700). Admin or support staff — running the
@@ -29,10 +37,11 @@ public class PosController {
 
     private final PosService posService;
 
-    /** Default POS browse grid — tap-to-add, no typing required for what's already
-     *  in the stall's own catalogue (including market-only pieces). */
+    /** Default POS browse grid — tap-to-add, no typing required. Normally the
+     *  stall's own catalogue (including market-only pieces); on a day with a
+     *  MarketDayCatalogue assigned, only that catalogue's products. */
     @GetMapping("/products")
-    public ResponseEntity<ApiResponse<List<ProductDto>>> products() {
+    public ResponseEntity<ApiResponse<List<PosBrowseItemDto>>> products() {
         return ResponseEntity.ok(ApiResponse.ok(posService.browseProducts()));
     }
 
@@ -89,23 +98,46 @@ public class PosController {
         return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate()));
     }
 
-    /** Admin override — calls a date a Market Day regardless of its actual sales
-     *  count. Admin-only (unlike the rest of this controller): this is a business
-     *  call about the stall's history, not something till staff decide mid-sale. */
-    @PutMapping("/market-days/{date}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<List<PosSalesDayDto>>> markMarketDay(@PathVariable LocalDate date) {
-        posService.markMarketDay(date);
-        return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Marked as a Market Day"));
+    /** Per-product sales totals across every completed market-stall sale, best
+     *  sellers first — backs the "best selling units" / stock-vs-sold section of
+     *  the Market Days report. */
+    @GetMapping("/product-sales")
+    public ResponseEntity<ApiResponse<List<PosProductSalesDto>>> productSales() {
+        return ResponseEntity.ok(ApiResponse.ok(posService.productSales()));
     }
 
-    /** Removes a manual Market Day flag — a day that separately qualifies via the
-     *  sales threshold stays flagged regardless. */
+    /** Creates/updates the Market Day for a date — plain flag when the body is
+     *  omitted, or set a name and/or assign a catalogue (which then restricts the
+     *  till on that date — see MarketDay). Works on a past OR future date, so a
+     *  market day can be planned ahead. Admin-only (unlike the rest of this
+     *  controller): this is a business call, not something till staff decide
+     *  mid-sale. */
+    @PutMapping("/market-days/{date}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<PosSalesDayDto>>> markMarketDay(
+            @PathVariable LocalDate date,
+            @RequestBody(required = false) MarkMarketDayRequest req) {
+        posService.markMarketDay(date, req);
+        return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Market Day saved"));
+    }
+
+    /** Removes a manual/planned Market Day entirely (flag, name, and catalogue
+     *  together) — a day that separately qualifies via the sales threshold stays
+     *  flagged regardless. */
     @DeleteMapping("/market-days/{date}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<List<PosSalesDayDto>>> unmarkMarketDay(@PathVariable LocalDate date) {
         posService.unmarkMarketDay(date);
-        return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Market Day override removed"));
+        return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Market Day removed"));
+    }
+
+    /** Detaches just the catalogue from a market day — the till stops being
+     *  restricted that date, but the day keeps its flag/name. */
+    @DeleteMapping("/market-days/{date}/catalogue")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<PosSalesDayDto>>> unassignCatalogue(@PathVariable LocalDate date) {
+        posService.unassignCatalogue(date);
+        return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Catalogue unassigned"));
     }
 
     /** Fallback for when the payment_intent.succeeded webhook is slow or never lands —
@@ -114,5 +146,60 @@ public class PosController {
     @PostMapping("/orders/{displayId}/reconcile")
     public ResponseEntity<ApiResponse<OrderDto>> reconcile(@PathVariable String displayId) {
         return ResponseEntity.ok(ApiResponse.ok(posService.reconcile(displayId), "Checked with Stripe directly"));
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Market Day catalogues — admin-only, same reasoning as market-days above.
+     * ------------------------------------------------------------------ */
+
+    @GetMapping("/market-day-catalogues")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<MarketDayCatalogueSummaryDto>>> listCatalogues() {
+        return ResponseEntity.ok(ApiResponse.ok(posService.listCatalogues()));
+    }
+
+    @GetMapping("/market-day-catalogues/{catalogueId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MarketDayCatalogueDto>> getCatalogue(@PathVariable UUID catalogueId) {
+        return ResponseEntity.ok(ApiResponse.ok(posService.getCatalogue(catalogueId)));
+    }
+
+    /** Starts a new catalogue — empty, or pre-seeded with an independent copy of
+     *  one or more existing catalogues' items when cloneFromCatalogueIds is given. */
+    @PostMapping("/market-day-catalogues")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MarketDayCatalogueDto>> createCatalogue(
+            @Valid @RequestBody CreateCatalogueRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(posService.createCatalogue(req), "Catalogue created"));
+    }
+
+    @PostMapping("/market-day-catalogues/{catalogueId}/items")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MarketDayCatalogueDto>> addCatalogueItem(
+            @PathVariable UUID catalogueId, @Valid @RequestBody AddCatalogueItemRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(posService.addCatalogueItem(catalogueId, req), "Product added"));
+    }
+
+    @PatchMapping("/market-day-catalogues/{catalogueId}/items/{itemId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MarketDayCatalogueDto>> updateCatalogueItem(
+            @PathVariable UUID catalogueId, @PathVariable UUID itemId,
+            @Valid @RequestBody UpdateCatalogueItemRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(posService.updateCatalogueItem(catalogueId, itemId, req), "Price updated"));
+    }
+
+    @DeleteMapping("/market-day-catalogues/{catalogueId}/items/{itemId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MarketDayCatalogueDto>> removeCatalogueItem(
+            @PathVariable UUID catalogueId, @PathVariable UUID itemId) {
+        return ResponseEntity.ok(ApiResponse.ok(posService.removeCatalogueItem(catalogueId, itemId), "Product removed"));
+    }
+
+    @DeleteMapping("/market-day-catalogues/{catalogueId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> deleteCatalogue(@PathVariable UUID catalogueId) {
+        posService.deleteCatalogue(catalogueId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Catalogue deleted"));
     }
 }
