@@ -182,8 +182,12 @@ public class StripeTerminalService {
      *  PaymentIntent's own `status` stays "succeeded" — Stripe never flips it back — so
      *  this is the only reliable way to tell a genuinely-fresh success apart from one
      *  that was already reversed (e.g. by hand in the Stripe Dashboard) before the
-     *  reconcile fallback got to it. Fails safe (assumes no refund) on a Stripe error,
-     *  same posture as the rest of this service's non-critical lookups. */
+     *  reconcile fallback got to it. Unlike this service's other non-critical lookups,
+     *  this one gates a money decision — PaymentService.reconcilePosOrder would mark a
+     *  refunded sale paid again if this silently answered "no refund" on a transient
+     *  Stripe error, so it fails CLOSED: propagate the error and let reconcile abort
+     *  rather than guess. The next reconcile attempt (poll retry, or another "Refresh
+     *  status" tap) just tries again. */
     public boolean hasRefund(String paymentIntentId) {
         try {
             RefundListParams params = RefundListParams.builder()
@@ -192,8 +196,8 @@ public class StripeTerminalService {
                     .build();
             return !Refund.list(params).getData().isEmpty();
         } catch (StripeException e) {
-            log.warn("Stripe Terminal refund-check failed for {} (assuming none): {}", paymentIntentId, e.getMessage());
-            return false;
+            log.warn("Stripe Terminal refund-check failed for {}: {}", paymentIntentId, e.getMessage());
+            throw ApiException.internalError("Could not verify refund status: " + e.getMessage());
         }
     }
 

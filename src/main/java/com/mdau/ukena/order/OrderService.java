@@ -192,7 +192,12 @@ public class OrderService {
                 throw ApiException.badRequest(
                         "Only " + product.getUnitsAvailable() + " of " + product.getName() + " left in stock");
             }
-            int pricePence = catalogueOverridePrices.getOrDefault(product.getId(), product.getPricePence());
+            // fromCatalogue is only a hint (never trusted for the actual price) — a
+            // stale/wrong client claim just falls through to the live price, same as
+            // an item genuinely from search. See OrderItemRequest's own comment.
+            int pricePence = Boolean.TRUE.equals(itemReq.fromCatalogue())
+                    ? catalogueOverridePrices.getOrDefault(product.getId(), product.getPricePence())
+                    : product.getPricePence();
             return OrderItem.builder()
                     .product(product)
                     .creator(product.getCreator())
@@ -237,7 +242,7 @@ public class OrderService {
                 .map(MarketDay::getCatalogue)
                 .map(catalogue -> marketDayCatalogueItemRepository
                         .findByCatalogue_IdOrderByProductNameAsc(catalogue.getId()).stream()
-                        .collect(Collectors.toMap(i -> i.getProduct().getId(), MarketDayCatalogueItem::getPricePence)))
+                        .collect(Collectors.toMap(MarketDayCatalogueItem::getProductId, MarketDayCatalogueItem::getPricePence)))
                 .orElse(Map.of());
     }
 

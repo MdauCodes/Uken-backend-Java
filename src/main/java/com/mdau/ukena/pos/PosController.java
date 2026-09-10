@@ -116,7 +116,7 @@ public class PosController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<List<PosSalesDayDto>>> markMarketDay(
             @PathVariable LocalDate date,
-            @RequestBody(required = false) MarkMarketDayRequest req) {
+            @Valid @RequestBody(required = false) MarkMarketDayRequest req) {
         posService.markMarketDay(date, req);
         return ResponseEntity.ok(ApiResponse.ok(posService.salesByDate(), "Market Day saved"));
     }

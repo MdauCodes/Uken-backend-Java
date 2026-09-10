@@ -77,7 +77,7 @@ public class PosService {
         if (todaysCatalogue.isPresent()) {
             return marketDayCatalogueItemRepository
                     .findByCatalogue_IdOrderByProductNameAsc(todaysCatalogue.get().getId()).stream()
-                    .map(i -> new PosBrowseItemDto(i.getProduct().getId(), i.getProductName(), i.getPricePence(), i.getHeroImage()))
+                    .map(i -> new PosBrowseItemDto(i.getProductId(), i.getProductName(), i.getPricePence(), i.getHeroImage()))
                     .toList();
         }
         return productService.browseForPos().stream()
@@ -348,7 +348,7 @@ public class PosService {
             for (UUID sourceId : req.cloneFromCatalogueIds()) {
                 for (MarketDayCatalogueItem item :
                         marketDayCatalogueItemRepository.findByCatalogue_IdOrderByProductNameAsc(sourceId)) {
-                    merged.put(item.getProduct().getId(), item);
+                    merged.put(item.getProductId(), item);
                 }
             }
             MarketDayCatalogue target = catalogue;
@@ -428,7 +428,7 @@ public class PosService {
         List<MarketDayCatalogueItemDto> items = marketDayCatalogueItemRepository
                 .findByCatalogue_IdOrderByProductNameAsc(catalogue.getId()).stream()
                 .map(i -> new MarketDayCatalogueItemDto(
-                        i.getId(), i.getProduct().getId(), i.getProductName(), i.getHeroImage(), i.getPricePence()))
+                        i.getId(), i.getProductId(), i.getProductName(), i.getHeroImage(), i.getPricePence()))
                 .toList();
         return new MarketDayCatalogueDto(catalogue.getId(), catalogue.getName(), catalogue.getCreatedAt(), items);
     }

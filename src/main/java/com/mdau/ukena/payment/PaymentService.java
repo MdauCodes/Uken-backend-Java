@@ -131,7 +131,10 @@ public class PaymentService {
                         .path("metadata").path("display_id").asText();
                 if (displayId == null || displayId.isBlank()) return;
 
-                orderRepository.findByDisplayId(displayId).ifPresentOrElse(
+                // Locked read — this can race PaymentService.reconcilePosOrder (an
+                // operator's "Refresh status" tap) for the same order; see
+                // OrderRepository.findByDisplayIdForUpdate.
+                orderRepository.findByDisplayIdForUpdate(displayId).ifPresentOrElse(
                         order -> {
                             // See the identical comment above — a completed POS order is
                             // DELIVERED, not PAID, so the guard must cover both.
@@ -252,7 +255,10 @@ public class PaymentService {
      */
     @Transactional
     public void reconcilePosOrder(String displayId) {
-        Order order = orderRepository.findByDisplayId(displayId)
+        // Locked read — this can race the payment_intent.succeeded webhook for the
+        // same order (an operator's "Refresh status" tap while it's landing, or two
+        // taps in a row); see OrderRepository.findByDisplayIdForUpdate.
+        Order order = orderRepository.findByDisplayIdForUpdate(displayId)
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
         if (order.getStatus() != OrderStatus.PENDING) return;
 

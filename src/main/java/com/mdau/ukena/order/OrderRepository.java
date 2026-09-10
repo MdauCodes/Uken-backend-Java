@@ -1,6 +1,8 @@
 package com.mdau.ukena.order;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
@@ -12,6 +14,17 @@ import java.util.UUID;
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Optional<Order> findByDisplayId(String displayId);
+
+    /** Row-locking variant for the two callers that can race each other into
+     *  double-processing the same PENDING -> PAID/DELIVERED transition: the
+     *  payment_intent.succeeded webhook and PaymentService.reconcilePosOrder (an
+     *  operator can tap "Refresh status" while a webhook is landing, or twice in a
+     *  row). Blocks a concurrent transaction reading the SAME order until this one
+     *  commits, so its own re-read of `status` afterwards is no longer PENDING and
+     *  its guard correctly no-ops instead of reprocessing stock/ledger/emails. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.displayId = :displayId")
+    Optional<Order> findByDisplayIdForUpdate(@Param("displayId") String displayId);
 
     /** Resolves a Terminal webhook (action_failed/action_succeeded) back to its order
      *  when the event payload carries the PaymentIntent id but not the display_id
