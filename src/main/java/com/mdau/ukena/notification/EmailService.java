@@ -16,6 +16,13 @@ public interface EmailService {
             String buyerEmail, String buyerName,
             String orderRef, int totalPence, String creatorNames);
 
+    /** A market-stall receipt — deliberately separate from sendOrderConfirmation,
+     *  which promises shipping/preparation that never happens for a walk-out
+     *  handover. The customer already has the item in hand. */
+    CompletableFuture<Boolean> sendPosReceipt(
+            String buyerEmail, String buyerName,
+            String orderRef, int totalPence, List<PosReceiptLine> items);
+
     CompletableFuture<Boolean> sendNewOrderNotification(
             String creatorEmail, String creatorName,
             String orderRef, String productName, int quantity);

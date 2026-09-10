@@ -83,6 +83,26 @@ public class EmailServiceImpl implements EmailService {
 
     @Async("emailTaskExecutor")
     @Override
+    public CompletableFuture<Boolean> sendPosReceipt(
+            String buyerEmail, String buyerName,
+            String orderRef, int totalPence, List<PosReceiptLine> items) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("name", buyerName);
+        model.put("orderRef", orderRef);
+        model.put("totalFormatted", formatPence(totalPence));
+        model.put("items", items.stream()
+                .map(i -> Map.of(
+                        "name", i.name(),
+                        "quantity", i.quantity(),
+                        "lineTotal", formatPence(i.pricePence() * i.quantity())))
+                .toList());
+        model.put("baseUrl", frontendUrl);
+        return send(buyerEmail, "Your Uken receipt - " + orderRef,
+                "pos-receipt.ftl", model);
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
     public CompletableFuture<Boolean> sendNewOrderNotification(
             String creatorEmail, String creatorName,
             String orderRef, String productName, int quantity) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.notification.EmailService;
+import com.mdau.ukena.notification.PosReceiptLine;
 import com.mdau.ukena.order.Order;
 import com.mdau.ukena.order.OrderChannel;
 import com.mdau.ukena.order.OrderItem;
@@ -329,12 +330,25 @@ public class PaymentService {
         // Anonymous POS sale (no customer email given) — WALK_IN_EMAIL is a NOT NULL
         // sentinel on the column, never a real inbox to send mail to.
         if (!WALK_IN_EMAIL.equalsIgnoreCase(order.getBuyerEmail())) {
-            emailService.sendOrderConfirmation(
-                    order.getBuyerEmail(), order.getBuyerFullName(),
-                    order.getDisplayId(), order.getTotalPence(),
-                    order.getItems().stream()
-                            .map(OrderItem::getCreatorFullName).distinct()
-                            .collect(Collectors.joining(", ")));
+            if (order.getChannel() == OrderChannel.POS) {
+                // A walk-out handover, not a shipment — sendOrderConfirmation's "packaged
+                // and shipped within 5-7 working days" copy is simply false for a market
+                // stall sale, and its "View your order" link goes to an account page a
+                // walk-in customer usually doesn't have. A plain receipt instead.
+                emailService.sendPosReceipt(
+                        order.getBuyerEmail(), order.getBuyerFullName(),
+                        order.getDisplayId(), order.getTotalPence(),
+                        order.getItems().stream()
+                                .map(i -> new PosReceiptLine(i.getProductName(), i.getQuantity(), i.getPricePence()))
+                                .toList());
+            } else {
+                emailService.sendOrderConfirmation(
+                        order.getBuyerEmail(), order.getBuyerFullName(),
+                        order.getDisplayId(), order.getTotalPence(),
+                        order.getItems().stream()
+                                .map(OrderItem::getCreatorFullName).distinct()
+                                .collect(Collectors.joining(", ")));
+            }
         }
 
         sendCreatorNotifications(order);
