@@ -76,6 +76,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/payments/initiate").permitAll()
                 .requestMatchers(HttpMethod.POST, "/orders").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
+                .requestMatchers(HttpMethod.POST, "/orders/track/code", "/orders/track/verify").permitAll()
+                .requestMatchers(HttpMethod.GET,  "/orders/access/*").permitAll()
+                .requestMatchers(HttpMethod.POST, "/orders/access/*/confirm", "/orders/access/*/report").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/delivery-zones").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/shipping-settings").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/categories").permitAll()
@@ -105,7 +108,7 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
         config.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
-        config.setAllowedHeaders(List.of("Content-Type","Authorization","Accept","Origin"));
+        config.setAllowedHeaders(List.of("Content-Type","Authorization","Accept","Origin","X-Order-Access"));
         config.setExposedHeaders(List.of("Authorization"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);

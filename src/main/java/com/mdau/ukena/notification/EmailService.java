@@ -6,6 +6,9 @@ import java.util.concurrent.CompletableFuture;
 
 public interface EmailService {
 
+    /** 6-digit code so a guest can see their full order without an account. */
+    CompletableFuture<Boolean> sendOrderAccessCode(String email, String fullName, String orderRef, String code);
+
     CompletableFuture<Boolean> sendWeightReminder(
             String email, String fullName, List<String> productNames);
 

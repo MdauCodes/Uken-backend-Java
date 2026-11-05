@@ -111,6 +111,62 @@ public class Order {
     @Column(name = "reminder_sent_at")
     private Instant reminderSentAt;
 
+    // ── Hub fulfilment (online orders) ─────────────────────────────────────
+    // All nullable so Hibernate's ddl-auto can add them to the existing table.
+
+    /** HUB (delivered by Royal Mail from the Nottingham base) or PICKUP (collected at the market stall). */
+    @Column(name = "fulfilment", length = 10)
+    private String fulfilment;
+
+    /** Where the order is on the hub journey. Null for POS sales and orders placed before stages existed. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "stage", length = 25)
+    private FulfilmentStage stage;
+
+    @Column(name = "stage_changed_at")
+    private Instant stageChangedAt;
+
+    /** The weekly flight (Shipment id) this order is booked on. */
+    @Column(name = "shipment_id", length = 20)
+    private String shipmentId;
+
+    /** Weighed at the hub when packed — used to split the flight's freight cost. */
+    @Column(name = "packed_weight_grams")
+    private Integer packedWeightGrams;
+
+    /** UK delivery service, e.g. "Royal Mail Tracked 48". */
+    @Column(name = "courier", length = 60)
+    private String courier;
+
+    @Column(name = "tracking_number", length = 60)
+    private String trackingNumber;
+
+    /** Staff member looking after the order. */
+    @Column(name = "assigned_to", length = 120)
+    private String assignedTo;
+
+    /** Buyer-reported problem, e.g. "Arrived damaged". */
+    @Column(name = "issue_kind", length = 60)
+    private String issueKind;
+
+    @Column(name = "issue_note", columnDefinition = "TEXT")
+    private String issueNote;
+
+    @Column(name = "buyer_confirmed_at")
+    private Instant buyerConfirmedAt;
+
+    /** JSON map creatorId → true once that maker has dropped their pieces at the hub. */
+    @Column(name = "maker_ready", columnDefinition = "TEXT")
+    private String makerReady;
+
+    public String effectiveFulfilment() {
+        return fulfilment != null ? fulfilment : "HUB";
+    }
+
+    public FulfilmentStage effectiveStage() {
+        return stage != null ? stage : FulfilmentStage.fromLegacy(status);
+    }
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

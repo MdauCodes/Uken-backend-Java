@@ -22,5 +22,23 @@ public record OrderDto(
          *  directly instead of a generic timeout message. */
         String lastPaymentError,
         /** Total refunded so far, in pence. 0 = no refund. */
-        int refundedPence
+        int refundedPence,
+        /** HUB (UK delivery) or PICKUP (collect at the market stall). */
+        String fulfilment,
+        /** Hub journey stage — see FulfilmentStage. Null for POS sales. */
+        String stage,
+        Instant stageChangedAt,
+        /** Weekly flight this order is booked on, and when it lands. */
+        String shipmentId,
+        String flightArrivesOn,
+        Integer packedWeightGrams,
+        String courier,
+        String trackingNumber,
+        String assignedTo,
+        String issueKind,
+        String issueNote,
+        Instant buyerConfirmedAt,
+        /** creatorId -> true once that maker has dropped their pieces at the hub. */
+        java.util.Map<String, Boolean> makerReady,
+        java.util.List<OrderEventDto> history
 ) {}

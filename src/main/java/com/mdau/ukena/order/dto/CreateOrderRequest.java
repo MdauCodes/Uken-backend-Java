@@ -14,5 +14,7 @@ public record CreateOrderRequest(
         String guestEmail,
         String guestFullName,
         /** Optional — validated and applied server-side, never trusted for the discount amount itself. */
-        String promoCode
+        String promoCode,
+        /** HUB (UK delivery, default) or PICKUP (collect at the market stall, free). */
+        @jakarta.validation.constraints.Pattern(regexp = "HUB|PICKUP") String fulfilment
 ) {}

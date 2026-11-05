@@ -71,6 +71,8 @@ public class OrderService {
     private final AuditLogService        auditLogService;
     private final MarketDayRepository    marketDayRepository;
     private final MarketDayCatalogueItemRepository marketDayCatalogueItemRepository;
+    private final OrderEventRepository   orderEventRepository;
+    private final com.mdau.ukena.shipment.ShipmentRepository shipmentRepository;
 
     @Transactional
     public OrderDto place(User buyer, CreateOrderRequest req) {
@@ -116,7 +118,8 @@ public class OrderService {
         // Flat UK delivery fee, free over the threshold — air freight is pooled per weekly
         // flight from the Nairobi hub, so the buyer never pays by weight. Weight is still
         // recorded per item for packing and freight cost.
-        int shippingPence = shippingSettings.deliveryChargeFor(productsTotalPence);
+        boolean pickup = "PICKUP".equals(req.fulfilment());
+        int shippingPence = pickup ? 0 : shippingSettings.deliveryChargeFor(productsTotalPence);
 
         // Promo code — validated and priced server-side; the client never dictates the
         // discount amount, only which code to try.
@@ -142,6 +145,7 @@ public class OrderService {
                 .delivery(toJson(req.delivery()))
                 .status(OrderStatus.PENDING)
                 .channel(OrderChannel.ONLINE)
+                .fulfilment(pickup ? "PICKUP" : "HUB")
                 .build();
 
         items.forEach(item -> item.setOrder(order));
@@ -295,8 +299,15 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public List<OrderDto> getAllOrders() {
-        return orderRepository.findAllOrderByCreatedAtDesc()
-                .stream().map(this::toDto).toList();
+        List<Order> orders = orderRepository.findAllOrderByCreatedAtDesc();
+        Map<UUID, List<OrderEvent>> events = orderEventRepository
+                .findByOrderIdInOrderByAtAsc(orders.stream().map(Order::getId).toList())
+                .stream().collect(Collectors.groupingBy(OrderEvent::getOrderId));
+        Map<String, com.mdau.ukena.shipment.Shipment> flights = shipmentRepository.findAll().stream()
+                .collect(Collectors.toMap(com.mdau.ukena.shipment.Shipment::getId, s -> s));
+        return orders.stream()
+                .map(o -> toDto(o, events.getOrDefault(o.getId(), List.of()), flights.get(o.getShipmentId()), true))
+                .toList();
     }
 
     @Transactional
@@ -308,10 +319,9 @@ public class OrderService {
                 .anyMatch(i -> i.getCreator() != null
                         && i.getCreator().getId().equals(creatorId));
         if (!owns) throw ApiException.forbidden("You do not have access to this order");
-        OrderStatus next = parseStatus(req.status());
-        validateTransition(order.getStatus(), next);
-        order.setStatus(next);
-        return toDto(orderRepository.save(order));
+        // Hub model: makers don't move the whole order along any more — they mark
+        // their part as dropped at the Nairobi hub, and staff take it from there.
+        throw ApiException.badRequest("Use \"Dropped at the hub\" once your pieces are with us");
     }
 
     /**
@@ -365,6 +375,14 @@ public class OrderService {
         }
 
         order.setStatus(OrderStatus.CANCELLED);
+        if (order.getStage() != null) {
+            order.setStage(FulfilmentStage.CANCELLED);
+            order.setStageChangedAt(Instant.now());
+            orderEventRepository.save(OrderEvent.builder().orderId(order.getId())
+                    .stage(FulfilmentStage.CANCELLED)
+                    .actor(actor != null && actor.email() != null ? actor.email() : "UKEN")
+                    .note("Refunded " + String.format("£%.2f", refundAmount / 100.0)).build());
+        }
         order.setRefundedAt(Instant.now());
         order.setRefundedPence(alreadyRefunded + refundAmount);
         orderRepository.save(order);
@@ -447,7 +465,37 @@ public class OrderService {
         catch (Exception e) { return null; }
     }
 
-    OrderDto toDto(Order o) {
+    /** Buyer-facing DTO for an order the caller has already been cleared to see. */
+    @Transactional(readOnly = true)
+    public OrderDto toDtoByDisplayId(String displayId) {
+        return toDto(orderRepository.findByDisplayId(displayId)
+                .orElseThrow(() -> ApiException.notFound("Order not found")));
+    }
+
+    public OrderDto toDto(Order o) {
+        return toDto(o, orderEventRepository.findByOrderIdOrderByAtAsc(o.getId()),
+                o.getShipmentId() != null ? shipmentRepository.findById(o.getShipmentId()).orElse(null) : null,
+                false);
+    }
+
+    /** Staff view: includes event notes and internal fields. */
+    public OrderDto toStaffDto(Order o) {
+        return toDto(o, orderEventRepository.findByOrderIdOrderByAtAsc(o.getId()),
+                o.getShipmentId() != null ? shipmentRepository.findById(o.getShipmentId()).orElse(null) : null,
+                true);
+    }
+
+    @SuppressWarnings("unchecked")
+    Map<String, Boolean> readMakerReady(Order o) {
+        if (o.getMakerReady() == null || o.getMakerReady().isBlank()) return new java.util.HashMap<>();
+        try {
+            return new java.util.HashMap<>(objectMapper.readValue(o.getMakerReady(), Map.class));
+        } catch (Exception e) {
+            return new java.util.HashMap<>();
+        }
+    }
+
+    OrderDto toDto(Order o, List<OrderEvent> events, com.mdau.ukena.shipment.Shipment flight, boolean staff) {
         int productsTotalPence = o.getItems().stream()
                 .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
         List<OrderItemDto> items = o.getItems().stream().map(i ->
@@ -475,7 +523,34 @@ public class OrderService {
                 new OrderBuyerDto(o.getBuyerFullName(), o.getBuyerEmail()),
                 items, parseDelivery(o.getDelivery()),
                 o.getLastPaymentError(),
-                o.getRefundedPence() != null ? o.getRefundedPence() : 0);
+                o.getRefundedPence() != null ? o.getRefundedPence() : 0,
+                o.getChannel() == OrderChannel.POS ? null : o.effectiveFulfilment(),
+                o.getChannel() == OrderChannel.POS || o.getStatus() == OrderStatus.PENDING
+                        ? null : o.effectiveStage().name(),
+                o.getStageChangedAt(),
+                o.getShipmentId(),
+                flight != null ? flight.getArrivesOn().toString() : null,
+                o.getPackedWeightGrams(),
+                o.getCourier(),
+                o.getTrackingNumber(),
+                staff ? o.getAssignedTo() : null,
+                o.getIssueKind(),
+                o.getIssueNote(),
+                o.getBuyerConfirmedAt(),
+                readMakerReady(o),
+                events.stream()
+                        .map(e -> new OrderEventDto(e.getStage().name(), staff ? e.getActor() : publicActor(e.getActor()),
+                                staff ? e.getNote() : null, e.getAt()))
+                        .toList());
+    }
+
+    /** Buyers see who handled a step only in broad terms — never staff names. */
+    private static String publicActor(String actor) {
+        if (actor == null) return "UKEN";
+        return switch (actor) {
+            case "Stripe", "Royal Mail", "Nairobi hub", "Nottingham base", "Market stall" -> actor;
+            default -> actor.contains("@") || actor.contains(" ") ? "UKEN" : actor;
+        };
     }
 
 
@@ -486,6 +561,13 @@ public class OrderService {
         OrderStatus next = parseStatus(req.status());
         validateAdminTransition(order.getStatus(), next);
         order.setStatus(next);
+        if (order.getChannel() != OrderChannel.POS) {
+            // Keep the hub stage in step when the older status endpoint is used.
+            order.setStage(FulfilmentStage.fromLegacy(next));
+            order.setStageChangedAt(Instant.now());
+            orderEventRepository.save(OrderEvent.builder().orderId(order.getId())
+                    .stage(order.getStage()).actor("UKEN").note("Status set to " + next).build());
+        }
         Order saved = orderRepository.save(order);
         if (!WALK_IN_EMAIL.equalsIgnoreCase(saved.getBuyerEmail())) {
             emailService.sendOrderStatusUpdate(

@@ -15,6 +15,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Optional<Order> findByDisplayId(String displayId);
 
+    List<Order> findByShipmentId(String shipmentId);
+
     /** Row-locking variant for the two callers that can race each other into
      *  double-processing the same PENDING -> PAID/DELIVERED transition: the
      *  payment_intent.succeeded webhook and PaymentService.reconcilePosOrder (an

@@ -43,6 +43,7 @@ public class PaymentService {
     private final ObjectMapper             objectMapper;
     private final ProductService           productService;
     private final StripeTerminalService    stripeTerminalService;
+    private final com.mdau.ukena.order.OrderEventRepository orderEventRepository;
 
     @Value("${ukena.payment.commission-rate:0.40}")
     private BigDecimal commissionRate;
@@ -308,8 +309,17 @@ public class PaymentService {
         // a real inbox, at every step in between).
         if (order.getChannel() == OrderChannel.POS) {
             order.setStatus(OrderStatus.DELIVERED);
+        } else {
+            // Online orders start the hub journey: makers → Nairobi hub → flight → UK.
+            order.setStage(com.mdau.ukena.order.FulfilmentStage.PAID);
+            order.setStageChangedAt(Instant.now());
         }
         orderRepository.save(order);
+        if (order.getChannel() != OrderChannel.POS) {
+            orderEventRepository.save(com.mdau.ukena.order.OrderEvent.builder()
+                    .orderId(order.getId()).stage(com.mdau.ukena.order.FulfilmentStage.PAID)
+                    .actor("Stripe").note("Paid by card").build());
+        }
 
         for (OrderItem item : order.getItems()) {
             if (item.getProduct() == null) continue;
