@@ -27,12 +27,16 @@ public class ShippingSettingsService {
     @Transactional
     public ShippingSettingsDto update(ShippingSettingsUpdateRequest req) {
         ShippingSettings settings = getOrCreate();
-        settings.setRatePencePerKg(req.ratePencePerKg());
-        settings.setFallbackWeightGrams(req.fallbackWeightGrams());
+        if (req.deliveryFeePence() != null) settings.setDeliveryFeePence(req.deliveryFeePence());
+        if (req.freeDeliveryOverPence() != null) settings.setFreeDeliveryOverPence(req.freeDeliveryOverPence());
+        if (req.ratePencePerKg() != null) settings.setRatePencePerKg(req.ratePencePerKg());
+        if (req.fallbackWeightGrams() != null) settings.setFallbackWeightGrams(req.fallbackWeightGrams());
         return toDto(repository.save(settings));
     }
 
     private ShippingSettingsDto toDto(ShippingSettings s) {
-        return new ShippingSettingsDto(s.getRatePencePerKg(), s.getFallbackWeightGrams(), s.getUpdatedAt());
+        return new ShippingSettingsDto(
+                s.effectiveDeliveryFeePence(), s.effectiveFreeDeliveryOverPence(),
+                s.getRatePencePerKg(), s.getFallbackWeightGrams(), s.getUpdatedAt());
     }
 }

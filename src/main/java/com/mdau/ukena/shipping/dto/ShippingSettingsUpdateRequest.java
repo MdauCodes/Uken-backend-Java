@@ -1,8 +1,10 @@
 package com.mdau.ukena.shipping.dto;
 
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotNull;
 
+/** Every field is optional — only the ones sent are changed. */
 public record ShippingSettingsUpdateRequest(
-        @NotNull @Min(0) Integer ratePencePerKg,
-        @NotNull @Min(1) Integer fallbackWeightGrams) {}
+        @Min(0) Integer deliveryFeePence,
+        @Min(0) Integer freeDeliveryOverPence,
+        @Min(0) Integer ratePencePerKg,
+        @Min(1) Integer fallbackWeightGrams) {}

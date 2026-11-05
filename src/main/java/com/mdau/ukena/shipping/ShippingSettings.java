@@ -33,6 +33,35 @@ public class ShippingSettings {
     @Column(name = "fallback_weight_grams", nullable = false)
     private int fallbackWeightGrams = 500;
 
+    /**
+     * Flat UK delivery fee in pence. Orders fly from the Nairobi hub in a combined
+     * weekly shipment, so buyers pay one simple fee rather than by weight.
+     * Nullable so Hibernate's ddl-auto can add the column to the existing row;
+     * {@link #effectiveDeliveryFeePence()} applies the default.
+     */
+    @Column(name = "delivery_fee_pence")
+    private Integer deliveryFeePence;
+
+    /** Orders whose items total at least this many pence ship free. Nullable, see above. */
+    @Column(name = "free_delivery_over_pence")
+    private Integer freeDeliveryOverPence;
+
+    public static final int DEFAULT_DELIVERY_FEE_PENCE = 495;
+    public static final int DEFAULT_FREE_DELIVERY_OVER_PENCE = 6000;
+
+    public int effectiveDeliveryFeePence() {
+        return deliveryFeePence != null ? deliveryFeePence : DEFAULT_DELIVERY_FEE_PENCE;
+    }
+
+    public int effectiveFreeDeliveryOverPence() {
+        return freeDeliveryOverPence != null ? freeDeliveryOverPence : DEFAULT_FREE_DELIVERY_OVER_PENCE;
+    }
+
+    /** UK delivery charge for an order whose items (before any promo) total {@code itemsPence}. */
+    public int deliveryChargeFor(int itemsPence) {
+        return itemsPence >= effectiveFreeDeliveryOverPence() ? 0 : effectiveDeliveryFeePence();
+    }
+
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;

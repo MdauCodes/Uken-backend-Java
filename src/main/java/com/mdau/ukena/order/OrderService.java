@@ -113,10 +113,10 @@ public class OrderService {
 
         int productsTotalPence = items.stream()
                 .mapToInt(i -> i.getPricePence() * i.getQuantity()).sum();
-        int totalWeightGrams = items.stream()
-                .mapToInt(i -> i.getWeightGrams() * i.getQuantity()).sum();
-        int shippingPence = (int) Math.round(
-                totalWeightGrams / 1000.0 * shippingSettings.getRatePencePerKg());
+        // Flat UK delivery fee, free over the threshold — air freight is pooled per weekly
+        // flight from the Nairobi hub, so the buyer never pays by weight. Weight is still
+        // recorded per item for packing and freight cost.
+        int shippingPence = shippingSettings.deliveryChargeFor(productsTotalPence);
 
         // Promo code — validated and priced server-side; the client never dictates the
         // discount amount, only which code to try.
