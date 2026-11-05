@@ -68,6 +68,22 @@ public class CreatorController {
                 creatorService.getByCreatorId(currentUser.creatorId())));
     }
 
+    @GetMapping("/me/payout")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<PayoutDetails>> getMyPayout(
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(creatorService.getPayout(currentUser.creatorId())));
+    }
+
+    @PutMapping("/me/payout")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<PayoutDetails>> updateMyPayout(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @Valid @RequestBody PayoutDetails req) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                creatorService.updatePayout(currentUser.creatorId(), req), "Payout details saved"));
+    }
+
     @PutMapping("/me")
     @PreAuthorize("hasRole('CREATOR')")
     @CacheEvict(value = {"creators", "creator", "featured"}, allEntries = true)

@@ -53,6 +53,36 @@ public class ArtisanApplication {
     @Column(columnDefinition = "TEXT")
     private String notes;
 
+    /** INDIVIDUAL or BUSINESS. Null on older applications = individual. */
+    @Column(name = "applicant_type", length = 20)
+    private String applicantType;
+
+    /** Phone or WhatsApp the team calls about the application. */
+    @Column(length = 40)
+    private String phone;
+
+    /** Business applicants: the name buyers will see. */
+    @Column(name = "trading_name", length = 160)
+    private String tradingName;
+
+    /** Sole trader, limited company, cooperative, farm group, community group. */
+    @Column(name = "business_type", length = 60)
+    private String businessType;
+
+    /** Company registration number or KRA PIN, if they have one. */
+    @Column(name = "registration_number", length = 60)
+    private String registrationNumber;
+
+    @Column(name = "member_count")
+    private Integer memberCount;
+
+    @Column(name = "contact_person", length = 120)
+    private String contactPerson;
+
+    /** The account that applied (account-first applications and signed-in buyers). Null on older ones. */
+    @Column(name = "user_id")
+    private java.util.UUID userId;
+
     @CreationTimestamp
     @Column(name = "submitted_at", updatable = false)
     private Instant submittedAt;

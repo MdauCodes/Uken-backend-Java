@@ -1,6 +1,9 @@
 package com.mdau.ukena.application;
 
 import com.mdau.ukena.application.dto.*;
+import com.mdau.ukena.auth.AuthService;
+import com.mdau.ukena.auth.dto.AuthResponse;
+import com.mdau.ukena.security.CurrentUser;
 import com.mdau.ukena.common.ApiException;
 import com.mdau.ukena.common.Slugify;
 import com.mdau.ukena.creator.Creator;
@@ -29,6 +32,123 @@ public class ApplicationService {
     private final CreatorRepository creatorRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
+    private final AuthService authService;
+
+    private static final String INDIVIDUAL = "INDIVIDUAL";
+    private static final String BUSINESS = "BUSINESS";
+
+    /**
+     * Account-first application: creates the account, a hidden maker profile and
+     * the application in one go, then signs the applicant in. The profile stays
+     * hidden from buyers (deletedAt set) until an admin approves the application,
+     * which re-activates it through the existing approval path.
+     */
+    @Transactional
+    public AuthResponse submitWithAccount(AccountApplicationRequest req) {
+        String email = req.email().toLowerCase().trim();
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+            throw ApiException.conflict(
+                    "This email already has a UKEN account. Sign in and apply from your account instead.");
+        }
+        if (applicationRepo.existsByEmailIgnoreCase(email)) {
+            throw ApiException.conflict("An application with this email has already been submitted");
+        }
+        boolean business = BUSINESS.equals(req.applicantType());
+        requireBusinessFields(business, req.tradingName(), req.contactPerson());
+
+        ArtisanApplication app = baseApplication(req.fullName().trim(), email, req.phone(), req.applicantType(),
+                req.region(), req.craft(), req.yearsOfPractice(), req.story(), req.tradingName(),
+                req.businessType(), req.registrationNumber(), req.memberCount(), req.contactPerson());
+
+        String creatorId = provisionCreatorProfile(app);
+        creatorRepository.findById(creatorId).ifPresent(c -> {
+            c.setDeletedAt(java.time.Instant.now()); // hidden until approved
+            creatorRepository.save(c);
+        });
+        User user = User.builder()
+                .email(email)
+                .passwordHash(passwordEncoder.encode(req.password()))
+                .fullName(req.fullName().trim())
+                .role(UserRole.ROLE_CREATOR)
+                .creatorId(creatorId)
+                .accountType(business ? BUSINESS : INDIVIDUAL)
+                .companyName(business ? req.tradingName().trim() : null)
+                .phone(req.phone().trim())
+                .build();
+        userRepository.save(user);
+
+        app.setUserId(user.getId());
+        applicationRepo.save(app);
+        emailService.sendApplicationReceived(email, req.fullName().trim(), app.getId());
+        log.info("Account-first application {} for {} ({})", app.getId(), email, creatorId);
+        return authService.issueFor(user);
+    }
+
+    /** A signed-in buyer applying with their existing account. Approval converts the account (admin confirms). */
+    @Transactional
+    public ApplicationDto submitForUser(CurrentUser current, MyApplicationRequest req) {
+        User user = userRepository.findById(current.id())
+                .orElseThrow(() -> ApiException.notFound("User not found"));
+        if (applicationRepo.findFirstByUserIdOrderBySubmittedAtDesc(user.getId()).isPresent()
+                || applicationRepo.existsByEmailIgnoreCase(user.getEmail())) {
+            throw ApiException.conflict("You have already applied. Check your application status.");
+        }
+        boolean business = BUSINESS.equals(req.applicantType());
+        requireBusinessFields(business, req.tradingName(), req.contactPerson());
+        ArtisanApplication app = baseApplication(user.getFullName(), user.getEmail(), req.phone(), req.applicantType(),
+                req.region(), req.craft(), req.yearsOfPractice(), req.story(), req.tradingName(),
+                req.businessType(), req.registrationNumber(), req.memberCount(), req.contactPerson());
+        app.setUserId(user.getId());
+        applicationRepo.save(app);
+        if (user.getPhone() == null) {
+            user.setPhone(req.phone().trim());
+            userRepository.save(user);
+        }
+        emailService.sendApplicationReceived(user.getEmail(), user.getFullName(), app.getId());
+        return toDto(app);
+    }
+
+    /** The signed-in user's most recent application, or null if they haven't applied. */
+    @Transactional(readOnly = true)
+    public ApplicationDto getMine(CurrentUser current) {
+        return applicationRepo.findFirstByUserIdOrderBySubmittedAtDesc(current.id())
+                .or(() -> applicationRepo.findFirstByEmailIgnoreCaseOrderBySubmittedAtDesc(current.email()))
+                .map(this::toDto)
+                .orElse(null);
+    }
+
+    private static void requireBusinessFields(boolean business, String tradingName, String contactPerson) {
+        if (!business) return;
+        if (tradingName == null || tradingName.isBlank())
+            throw ApiException.badRequest("Enter your trading name");
+        if (contactPerson == null || contactPerson.isBlank())
+            throw ApiException.badRequest("Tell us who we should speak to");
+    }
+
+    private ArtisanApplication baseApplication(String fullName, String email, String phone, String applicantType,
+                                               String region, String craft, int years, String story,
+                                               String tradingName, String businessType, String registrationNumber,
+                                               Integer memberCount, String contactPerson) {
+        boolean business = BUSINESS.equals(applicantType);
+        return ArtisanApplication.builder()
+                .id(generateApplicationId())
+                .fullName(fullName).email(email)
+                .phone(phone.trim())
+                .applicantType(business ? BUSINESS : INDIVIDUAL)
+                .region(region.trim()).craft(craft.trim())
+                .yearsOfPractice(years).story(story.trim())
+                .tradingName(business ? tradingName.trim() : null)
+                .businessType(business ? blankToNull(businessType) : null)
+                .registrationNumber(business ? blankToNull(registrationNumber) : null)
+                .memberCount(business ? memberCount : null)
+                .contactPerson(business ? contactPerson.trim() : null)
+                .status(ApplicationStatus.PENDING)
+                .build();
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
 
     @Transactional
     public ApplicationDto submit(SubmitRequest req) {
@@ -174,7 +294,10 @@ public class ApplicationService {
 
     /** Creates the {@code creators} row only — shared by fresh provisioning and role conversion. */
     private String provisionCreatorProfile(ArtisanApplication app) {
-        String slug = Slugify.slugify(app.getFullName());
+        // Business applicants appear to buyers under their trading name.
+        String publicName = app.getTradingName() != null && !app.getTradingName().isBlank()
+                ? app.getTradingName() : app.getFullName();
+        String slug = Slugify.slugify(publicName);
         String finalSlug = slug;
         int count = 1;
         while (creatorRepository.existsById(finalSlug)) {
@@ -186,8 +309,8 @@ public class ApplicationService {
 
         Creator creator = Creator.builder()
                 .id(finalSlug)
-                .firstName(app.getFullName().split(" ")[0])
-                .fullName(app.getFullName())
+                .firstName(publicName.split(" ")[0])
+                .fullName(publicName)
                 .craft(app.getCraft())
                 .region(app.getRegion())
                 .hook(app.getStory().length() > 120
@@ -239,6 +362,10 @@ public class ApplicationService {
                 a.getCraft(), a.getYearsOfPractice(), a.getStory(),
                 a.getSubmittedAt() != null ? a.getSubmittedAt().toString() : null,
                 a.getStatus().name(), a.getPortrait(), a.getWorkSample(),
-                a.getNotes());
+                a.getNotes(),
+                a.getApplicantType() != null ? a.getApplicantType() : INDIVIDUAL,
+                a.getPhone(), a.getTradingName(), a.getBusinessType(), a.getRegistrationNumber(),
+                a.getMemberCount(), a.getContactPerson(),
+                a.getUserId() != null);
     }
 }

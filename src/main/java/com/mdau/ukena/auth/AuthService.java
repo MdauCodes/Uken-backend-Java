@@ -41,11 +41,19 @@ public class AuthService {
         if (userRepository.existsByEmail(req.email().toLowerCase().trim())) {
             throw ApiException.conflict("An account with this email already exists");
         }
+        boolean business = "BUSINESS".equals(req.accountType());
+        if (business && (req.companyName() == null || req.companyName().isBlank())) {
+            throw ApiException.badRequest("Enter your company name");
+        }
         User user = User.builder()
                 .email(req.email().toLowerCase().trim())
                 .passwordHash(passwordEncoder.encode(req.password()))
                 .fullName(req.fullName().trim())
                 .role(UserRole.ROLE_BUYER)
+                .accountType(business ? "BUSINESS" : "INDIVIDUAL")
+                .companyName(business ? req.companyName().trim() : null)
+                .jobTitle(business ? blankToNull(req.jobTitle()) : null)
+                .vatNumber(business ? blankToNull(req.vatNumber()) : null)
                 .build();
         userRepository.save(user);
         orderService.linkGuestOrders(user.getEmail(), user);
@@ -108,14 +116,25 @@ public class AuthService {
         log.info("Password reset completed for user {}", user.getId());
     }
 
-    private AuthUserDto toDto(User user) {
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    /** Signs a user in straight after an account is created elsewhere (e.g. an account-first maker application). */
+    public AuthResponse issueFor(User user) {
+        return new AuthResponse(jwtService.issue(user), toDto(user));
+    }
+
+    AuthUserDto toDto(User user) {
         return new AuthUserDto(
                 user.getId().toString(),
                 user.getEmail(),
                 user.getFullName(),
                 user.getRole().name(),
                 user.getCreatorId(),
-                Boolean.TRUE.equals(user.getSuperAdmin())
+                Boolean.TRUE.equals(user.getSuperAdmin()),
+                user.getAccountType() != null ? user.getAccountType() : "INDIVIDUAL",
+                user.getCompanyName()
         );
     }
 }

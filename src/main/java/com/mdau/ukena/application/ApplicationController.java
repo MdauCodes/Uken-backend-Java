@@ -1,5 +1,9 @@
 package com.mdau.ukena.application;
 
+import com.mdau.ukena.auth.dto.AuthResponse;
+import com.mdau.ukena.security.CurrentUser;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.mdau.ukena.application.dto.*;
 import com.mdau.ukena.common.ApiResponse;
 import jakarta.validation.Valid;
@@ -25,6 +29,31 @@ public class ApplicationController {
                 .body(ApiResponse.ok(
                         applicationService.submit(req),
                         "Application submitted successfully"));
+    }
+
+    // Public: account-first application. Creates the account + application and signs the applicant in.
+    @PostMapping("/applications/account")
+    @RateLimiter(name = "auth-api")
+    public ResponseEntity<ApiResponse<AuthResponse>> submitWithAccount(
+            @Valid @RequestBody AccountApplicationRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(applicationService.submitWithAccount(req), "Application received"));
+    }
+
+    // A signed-in buyer applies with the account they already have.
+    @PostMapping("/applications/me")
+    @PreAuthorize("hasRole('BUYER')")
+    public ResponseEntity<ApiResponse<ApplicationDto>> submitForMe(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @Valid @RequestBody MyApplicationRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(applicationService.submitForUser(currentUser, req), "Application received"));
+    }
+
+    // The signed-in user's own application (data is null if they haven't applied).
+    @GetMapping("/applications/me")
+    public ResponseEntity<ApiResponse<ApplicationDto>> mine(@AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(applicationService.getMine(currentUser)));
     }
 
     // Public — lets the join form warn a returning buyer/applicant before they fill out the whole form

@@ -40,6 +40,31 @@ public class CreatorService {
         return toDetail(creator);
     }
 
+    /** The maker's own payout details, or null if they haven't added them yet. */
+    @Transactional(readOnly = true)
+    public PayoutDetails getPayout(String creatorId) {
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+        if (creator.getPayoutMethod() == null) return null;
+        return new PayoutDetails(creator.getPayoutMethod(), creator.getPayoutAccount(),
+                creator.getPayoutAccountName(), creator.getPayoutBankName());
+    }
+
+    @Transactional
+    public PayoutDetails updatePayout(String creatorId, PayoutDetails req) {
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+        boolean bank = "BANK".equals(req.method());
+        if (bank && (req.bankName() == null || req.bankName().isBlank()))
+            throw ApiException.badRequest("Enter the bank name");
+        creator.setPayoutMethod(req.method());
+        creator.setPayoutAccount(req.account().trim());
+        creator.setPayoutAccountName(req.accountName().trim());
+        creator.setPayoutBankName(bank ? req.bankName().trim() : null);
+        creatorRepository.save(creator);
+        return getPayout(creatorId);
+    }
+
     @Transactional
     public CreatorDetail updateProfile(String creatorId, CreatorProfileUpdate req) {
         Creator creator = creatorRepository.findById(creatorId)

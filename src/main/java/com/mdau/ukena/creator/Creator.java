@@ -64,6 +64,20 @@ public class Creator {
     @Column(name = "map_pin", columnDefinition = "TEXT")
     private String mapPin;
 
+    /** How the maker is paid: MPESA or BANK. Never exposed on public creator endpoints. */
+    @Column(name = "payout_method", length = 10)
+    private String payoutMethod;
+
+    /** M-Pesa number/paybill, or bank account number. */
+    @Column(name = "payout_account", length = 60)
+    private String payoutAccount;
+
+    @Column(name = "payout_account_name", length = 120)
+    private String payoutAccountName;
+
+    @Column(name = "payout_bank_name", length = 120)
+    private String payoutBankName;
+
     // Soft-delete — orders and products retain the creator reference
     @Column(name = "deleted_at")
     private Instant deletedAt;

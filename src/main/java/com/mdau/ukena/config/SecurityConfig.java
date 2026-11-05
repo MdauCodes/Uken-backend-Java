@@ -68,7 +68,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/auth/login", "/auth/register",
                         "/auth/forgot-password", "/auth/reset-password").permitAll()
-                .requestMatchers(HttpMethod.POST, "/applications").permitAll()
+                .requestMatchers(HttpMethod.POST, "/applications", "/applications/account").permitAll()
                 .requestMatchers(HttpMethod.GET, "/applications/email-check").permitAll()
                 .requestMatchers(HttpMethod.POST, "/cloudinary/sign").permitAll()
                 .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()

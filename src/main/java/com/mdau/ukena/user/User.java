@@ -49,6 +49,28 @@ public class User {
     @Column(name = "super_admin")
     private Boolean superAdmin;
 
+    /** INDIVIDUAL or BUSINESS. Null on accounts made before business accounts existed = individual. */
+    @Column(name = "account_type", length = 20)
+    private String accountType;
+
+    /** Business buyers only. */
+    @Column(name = "company_name", length = 160)
+    private String companyName;
+
+    @Column(name = "job_title", length = 120)
+    private String jobTitle;
+
+    @Column(name = "vat_number", length = 40)
+    private String vatNumber;
+
+    /** Phone or WhatsApp — collected from maker applicants so the team can call them. */
+    @Column(length = 40)
+    private String phone;
+
+    public boolean isBusiness() {
+        return "BUSINESS".equals(accountType);
+    }
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

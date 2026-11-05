@@ -6,5 +6,8 @@ public record AuthUserDto(
         String fullName,
         String role,
         String creatorId,
-        boolean superAdmin
+        boolean superAdmin,
+        /** INDIVIDUAL or BUSINESS. */
+        String accountType,
+        String companyName
 ) {}
