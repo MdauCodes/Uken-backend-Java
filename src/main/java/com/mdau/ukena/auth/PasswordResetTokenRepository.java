@@ -12,6 +12,14 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
 
     Optional<PasswordResetToken> findByToken(String token);
 
+    /** The newest unused code for this account — the only one that can work. */
+    Optional<PasswordResetToken> findFirstByUserEmailAndUsedFalseOrderByCreatedAtDesc(String email);
+
+    /** Asking for a new code cancels any older ones. */
+    @Modifying
+    @Query("UPDATE PasswordResetToken t SET t.used = true WHERE t.user.id = :userId AND t.used = false")
+    void invalidateForUser(@Param("userId") java.util.UUID userId);
+
     @Modifying
     @Query("DELETE FROM PasswordResetToken t WHERE t.expiresAt < :now")
     void deleteExpired(@Param("now") Instant now);

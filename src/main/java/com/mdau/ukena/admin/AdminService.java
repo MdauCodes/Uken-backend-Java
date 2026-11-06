@@ -70,7 +70,7 @@ public class AdminService {
         // same pattern ApplicationService already uses for new creators.
         boolean generated = req.password() == null || req.password().isBlank();
         String plainPassword = generated
-                ? "Ukena" + java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 9999) + "!"
+                ? com.mdau.ukena.common.SecurePasswords.generate()
                 : req.password();
 
         User staff = User.builder()
@@ -422,6 +422,17 @@ public class AdminService {
         return new AdminCreatorRow(c.getId(), c.getFirstName(), c.getFullName(),
                 c.getCraft(), c.getRegion(), c.getImage(),
                 c.getDeletedAt() != null, c.getCreatedAt(), email);
+    }
+
+    /** One maker's own earnings summary — zeros until their first paid sale. Amounts are
+     *  already their share (the platform's commission is taken when each sale is recorded). */
+    @Transactional(readOnly = true)
+    public CreatorPayoutDto payoutForCreator(String creatorId) {
+        return payoutRepository.findByCreatorId(creatorId).map(this::toPayoutDto)
+                .orElseGet(() -> creatorRepository.findById(creatorId)
+                        .map(c -> new CreatorPayoutDto(c.getId(), c.getFullName(), c.getRegion(), c.getCraft(),
+                                0, 0, 0, null))
+                        .orElseThrow(() -> ApiException.notFound("Creator profile not found")));
     }
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {

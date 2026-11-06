@@ -33,6 +33,9 @@ public class AuthService {
     private final PasswordResetTokenRepository resetTokenRepository;
     private final OrderService orderService;
 
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+    private static final int MAX_RESET_ATTEMPTS = 5;
+
     @Value("${ukena.email.frontend-url:http://localhost:5173}")
     private String frontendUrl;
 
@@ -56,7 +59,10 @@ public class AuthService {
                 .vatNumber(business ? blankToNull(req.vatNumber()) : null)
                 .build();
         userRepository.save(user);
-        orderService.linkGuestOrders(user.getEmail(), user);
+        // Guest orders placed with this email are NOT linked here: the email isn't
+        // proven yet, and linking would hand someone else's orders (and address) to
+        // whoever registers first. They're linked once the inbox is proven — after a
+        // password reset, or when the buyer opens one with an emailed order code.
         return new AuthResponse(jwtService.issue(user), toDto(user));
     }
 
@@ -84,10 +90,12 @@ public class AuthService {
         String email = req.email().toLowerCase().trim();
         userRepository.findByEmail(email).ifPresent(user -> {
             resetTokenRepository.deleteExpired(Instant.now());
-            String otp = String.format("%06d",
-                    ThreadLocalRandom.current().nextInt(0, 1_000_000));
+            resetTokenRepository.invalidateForUser(user.getId());
+            String otp = String.format("%06d", RANDOM.nextInt(1_000_000));
             PasswordResetToken resetToken = PasswordResetToken.builder()
-                    .token(otp)
+                    .token(java.util.UUID.randomUUID().toString())
+                    .codeHash(passwordEncoder.encode(otp))
+                    .attempts(0)
                     .user(user)
                     .expiresAt(Instant.now().plusSeconds(600))
                     .used(false)
@@ -98,21 +106,36 @@ public class AuthService {
         });
     }
 
-    @Transactional
+    /**
+     * The code only works for the account it was sent to, is checked against a
+     * hash, and locks after 5 wrong tries — so it can't be guessed across accounts.
+     * Wrong tries are committed even though the request fails.
+     */
+    @Transactional(noRollbackFor = ApiException.class)
     public void resetPassword(ResetPasswordRequest req) {
-        PasswordResetToken resetToken = resetTokenRepository.findByToken(req.token())
-                .orElseThrow(() -> ApiException.badRequest("Invalid or expired OTP"));
-        if (resetToken.isUsed()) {
-            throw ApiException.badRequest("This OTP has already been used");
-        }
+        String email = req.email().toLowerCase().trim();
+        PasswordResetToken resetToken = resetTokenRepository
+                .findFirstByUserEmailAndUsedFalseOrderByCreatedAtDesc(email)
+                .orElseThrow(() -> ApiException.badRequest("That code doesn't match. Ask for a new one."));
         if (Instant.now().isAfter(resetToken.getExpiresAt())) {
-            throw ApiException.badRequest("This OTP has expired");
+            throw ApiException.badRequest("That code has expired. Ask for a new one.");
+        }
+        int attempts = resetToken.getAttempts() != null ? resetToken.getAttempts() : 0;
+        if (resetToken.getCodeHash() == null || attempts >= MAX_RESET_ATTEMPTS) {
+            throw ApiException.badRequest("Too many tries. Ask for a new code.");
+        }
+        if (!passwordEncoder.matches(req.token(), resetToken.getCodeHash())) {
+            resetToken.setAttempts(attempts + 1);
+            resetTokenRepository.save(resetToken);
+            throw ApiException.badRequest("That code doesn't match. Check the latest email from us.");
         }
         User user = resetToken.getUser();
         user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
         userRepository.save(user);
         resetToken.setUsed(true);
         resetTokenRepository.save(resetToken);
+        // They've just proven they read this inbox — guest orders placed with it are theirs.
+        orderService.linkGuestOrders(user.getEmail(), user);
         log.info("Password reset completed for user {}", user.getId());
     }
 

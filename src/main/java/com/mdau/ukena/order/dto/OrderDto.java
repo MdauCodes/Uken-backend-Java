@@ -40,5 +40,16 @@ public record OrderDto(
         Instant buyerConfirmedAt,
         /** creatorId -> true once that maker has dropped their pieces at the hub. */
         java.util.Map<String, Boolean> makerReady,
-        java.util.List<OrderEventDto> history
-) {}
+        java.util.List<OrderEventDto> history,
+        /** Set only on the response to a guest placing an order: lets that browser open
+         *  the order (review, payment return, confirmation) for an hour without the
+         *  emailed code. Never stored on the order or returned anywhere else. */
+        String accessToken
+) {
+    public OrderDto withAccessToken(String token) {
+        return new OrderDto(displayId, createdAt, status, channel, productsTotalPence, shippingPence,
+                promoCode, discountPence, totalPence, buyer, items, delivery, lastPaymentError, refundedPence,
+                fulfilment, stage, stageChangedAt, shipmentId, flightArrivesOn, packedWeightGrams, courier,
+                trackingNumber, assignedTo, issueKind, issueNote, buyerConfirmedAt, makerReady, history, token);
+    }
+}

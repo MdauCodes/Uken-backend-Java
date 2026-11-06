@@ -35,6 +35,14 @@ public class PasswordResetToken {
     @Column(nullable = false)
     private boolean used = false;
 
+    /** BCrypt hash of the 6-digit code. {@code token} is now just a random unique id. */
+    @Column(name = "code_hash", length = 100)
+    private String codeHash;
+
+    /** Wrong guesses so far; locked at 5. Nullable for rows made before this existed. */
+    @Column(name = "attempts")
+    private Integer attempts;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

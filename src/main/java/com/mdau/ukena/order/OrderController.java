@@ -22,6 +22,7 @@ public class OrderController {
 
     private final OrderService orderService;
     private final UserRepository userRepository;
+    private final com.mdau.ukena.order.access.OrderAccessService accessService;
 
     @PostMapping("/orders")
     public ResponseEntity<ApiResponse<OrderDto>> place(
@@ -39,18 +40,12 @@ public class OrderController {
             throw ApiException.badRequest("Provide guestEmail and guestFullName for guest checkout, or log in");
         }
 
+        OrderDto placed = orderService.place(buyer, req);
+        // A guest has no session, so give this browser a short-lived token for this
+        // one order (review, payment return, confirmation) instead of a public lookup.
+        if (buyer == null) placed = placed.withAccessToken(accessService.issueToken(placed.displayId(), placed.buyer().email()));
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(
-                        orderService.place(buyer, req),
-                        "Order placed successfully"));
-    }
-
-    @GetMapping("/orders/track")
-    public ResponseEntity<ApiResponse<OrderDto>> track(
-            @RequestParam String displayId,
-            @RequestParam String email) {
-        return ResponseEntity.ok(ApiResponse.ok(
-                orderService.trackGuestOrder(displayId, email)));
+                .body(ApiResponse.ok(placed, "Order placed successfully"));
     }
 
     @GetMapping("/orders/me")

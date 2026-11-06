@@ -87,6 +87,24 @@ public class OrderAccessService {
         return entry.getToken();
     }
 
+    /** An access token for a guest who has just placed this order — no code needed. */
+    @Transactional
+    public String issueToken(String displayId, String email) {
+        byte[] bytes = new byte[24];
+        RANDOM.nextBytes(bytes);
+        OrderAccessCode entry = OrderAccessCode.builder()
+                .displayId(displayId)
+                .email(email.toLowerCase().trim())
+                .codeHash("-") // no code: this entry only carries a token
+                .expiresAt(Instant.now())
+                .attempts(MAX_ATTEMPTS)
+                .token(HexFormat.of().formatHex(bytes))
+                .tokenExpiresAt(Instant.now().plus(TOKEN_TTL))
+                .build();
+        codeRepository.save(entry);
+        return entry.getToken();
+    }
+
     /**
      * The order the caller may act on: a signed-in buyer who owns it, staff, or
      * anyone holding a valid access token for it. Otherwise "not found" — never

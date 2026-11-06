@@ -29,6 +29,7 @@ public class CreatorService {
     @Transactional(readOnly = true)
     public CreatorDetail getById(String id) {
         Creator creator = creatorRepository.findById(id)
+                .filter(c -> !c.isDeleted()) // hidden: under review, rejected or removed
                 .orElseThrow(() -> ApiException.notFound("Creator not found"));
         return toDetail(creator);
     }

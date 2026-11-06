@@ -341,6 +341,8 @@ public class EmailServiceImpl implements EmailService {
             case "SHIPPED"    -> "Your order is on its way";
             case "DELIVERED"  -> "Your order has been delivered";
             case "CANCELLED"  -> "Your order has been cancelled";
+            case "REFUNDED"   -> "Your order has been refunded";
+            case "PARTIALLY_REFUNDED" -> "Part of your order has been refunded";
             default           -> status;
         };
     }

@@ -24,6 +24,7 @@ import java.util.List;
 public class CreatorController {
 
     private final CreatorService creatorService;
+    private final com.mdau.ukena.admin.AdminService adminService;
     private final FeaturedSlotRepository featuredSlotRepository;
 
     @GetMapping
@@ -66,6 +67,14 @@ public class CreatorController {
             @AuthenticationPrincipal CurrentUser currentUser) {
         return ResponseEntity.ok(ApiResponse.ok(
                 creatorService.getByCreatorId(currentUser.creatorId())));
+    }
+
+    /** The maker's own earnings — makers can't read the admin payout list. */
+    @GetMapping("/me/earnings")
+    @PreAuthorize("hasRole('CREATOR')")
+    public ResponseEntity<ApiResponse<com.mdau.ukena.admin.dto.CreatorPayoutDto>> getMyEarnings(
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(ApiResponse.ok(adminService.payoutForCreator(currentUser.creatorId())));
     }
 
     @GetMapping("/me/payout")

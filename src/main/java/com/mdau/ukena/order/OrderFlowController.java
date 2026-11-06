@@ -104,8 +104,12 @@ public class OrderFlowController {
 
     @PostMapping("/orders/track/verify")
     @RateLimiter(name = "auth-api")
-    public ResponseEntity<ApiResponse<TrackVerifyResponse>> verify(@Valid @RequestBody TrackVerifyRequest req) {
+    public ResponseEntity<ApiResponse<TrackVerifyResponse>> verify(@Valid @RequestBody TrackVerifyRequest req,
+            @AuthenticationPrincipal CurrentUser user) {
         String token = accessService.verify(req);
+        if (user != null && user.email() != null && user.email().equalsIgnoreCase(req.email().trim())) {
+            orderService.linkGuestOrdersFor(user.id());
+        }
         return ResponseEntity.ok(ApiResponse.ok(
                 new TrackVerifyResponse(token, orderService.toDtoByDisplayId(req.displayId().trim()))));
     }

@@ -257,13 +257,10 @@ public class OrderService {
                 .orElseThrow(() -> ApiException.notFound("Order not found: " + displayId));
     }
 
-    @Transactional(readOnly = true)
-    public OrderDto trackGuestOrder(String displayId, String email) {
-        Order order = orderRepository.findByDisplayId(displayId)
-                .orElseThrow(() -> ApiException.notFound("Order not found"));
-        if (!order.getBuyerEmail().equalsIgnoreCase(email.trim()))
-            throw ApiException.notFound("Order not found");
-        return toDto(order);
+    /** Links guest orders placed with this account's email — only call once the inbox is proven. */
+    @Transactional
+    public void linkGuestOrdersFor(UUID userId) {
+        userRepository.findById(userId).ifPresent(u -> linkGuestOrders(u.getEmail(), u));
     }
 
     @Transactional
@@ -374,14 +371,21 @@ public class OrderService {
             reverseLedgerEntry(item, order);
         }
 
-        order.setStatus(OrderStatus.CANCELLED);
-        if (order.getStage() != null) {
-            order.setStage(FulfilmentStage.CANCELLED);
-            order.setStageChangedAt(Instant.now());
+        String refundNote = (isFullRefund ? "Refunded " : "Partial refund ")
+                + String.format("£%.2f", refundAmount / 100.0);
+        String refundActor = actor != null && actor.email() != null ? actor.email() : "UKEN";
+        if (isFullRefund) {
+            order.setStatus(OrderStatus.CANCELLED);
+            if (order.getStage() != null) {
+                order.setStage(FulfilmentStage.CANCELLED);
+                order.setStageChangedAt(Instant.now());
+                orderEventRepository.save(OrderEvent.builder().orderId(order.getId())
+                        .stage(FulfilmentStage.CANCELLED).actor(refundActor).note(refundNote).build());
+            }
+        } else if (order.getStage() != null) {
+            // Partial (e.g. one damaged piece): the order carries on; the history records it.
             orderEventRepository.save(OrderEvent.builder().orderId(order.getId())
-                    .stage(FulfilmentStage.CANCELLED)
-                    .actor(actor != null && actor.email() != null ? actor.email() : "UKEN")
-                    .note("Refunded " + String.format("£%.2f", refundAmount / 100.0)).build());
+                    .stage(order.getStage()).actor(refundActor).note(refundNote).build());
         }
         order.setRefundedAt(Instant.now());
         order.setRefundedPence(alreadyRefunded + refundAmount);
@@ -392,7 +396,8 @@ public class OrderService {
 
         if (!WALK_IN_EMAIL.equalsIgnoreCase(order.getBuyerEmail())) {
             emailService.sendOrderStatusUpdate(
-                    order.getBuyerEmail(), order.getBuyerFullName(), displayId, "REFUNDED");
+                    order.getBuyerEmail(), order.getBuyerFullName(), displayId,
+                    isFullRefund ? "REFUNDED" : "PARTIALLY_REFUNDED");
         }
 
         log.info("Order {} refunded: {}p via {}", displayId, refundAmount, result.gatewayRefundRef());
@@ -541,7 +546,8 @@ public class OrderService {
                 events.stream()
                         .map(e -> new OrderEventDto(e.getStage().name(), staff ? e.getActor() : publicActor(e.getActor()),
                                 staff ? e.getNote() : null, e.getAt()))
-                        .toList());
+                        .toList(),
+                null);
     }
 
     /** Buyers see who handled a step only in broad terms — never staff names. */

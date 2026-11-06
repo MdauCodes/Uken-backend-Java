@@ -75,7 +75,6 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET,  "/payments/webhook").permitAll()
                 .requestMatchers(HttpMethod.POST, "/payments/initiate").permitAll()
                 .requestMatchers(HttpMethod.POST, "/orders").permitAll()
-                .requestMatchers(HttpMethod.GET,  "/orders/track").permitAll()
                 .requestMatchers(HttpMethod.POST, "/orders/track/code", "/orders/track/verify").permitAll()
                 .requestMatchers(HttpMethod.GET,  "/orders/access/*").permitAll()
                 .requestMatchers(HttpMethod.POST, "/orders/access/*/confirm", "/orders/access/*/report").permitAll()

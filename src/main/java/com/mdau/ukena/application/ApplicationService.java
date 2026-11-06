@@ -327,8 +327,7 @@ public class ApplicationService {
     private String provisionNewCreatorAccount(ArtisanApplication app) {
         String finalSlug = provisionCreatorProfile(app);
 
-        String tempPassword = "Ukena"
-                + ThreadLocalRandom.current().nextInt(1000, 9999) + "!";
+        String tempPassword = com.mdau.ukena.common.SecurePasswords.generate();
         User user = User.builder()
                 .email(app.getEmail().toLowerCase().trim())
                 .passwordHash(passwordEncoder.encode(tempPassword))
