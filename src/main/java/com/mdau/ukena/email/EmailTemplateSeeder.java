@@ -56,6 +56,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
             log.info("Superadmin not found yet ({}) - skipping template seed this boot", OWNER_EMAIL);
             return;
         }
+        renameCreatorTemplates();
         for (Seed seed : SEEDS) {
             if (templateRepository.existsByName(seed.name())) continue;
             templateRepository.save(EmailTemplate.builder()
@@ -69,6 +70,33 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                     .build());
             log.info("Seeded email template: {}", seed.name());
         }
+    }
+
+    /** "Creators" became "producers": rename the three starters seeded under the old
+     *  names (and their wording and links) instead of seeding duplicates. Runs once per
+     *  template — after the rename the old name no longer exists. */
+    private void renameCreatorTemplates() {
+        for (String suffix : java.util.List.of("Welcome & next steps", "Listing needs attention", "Payout sent")) {
+            String oldName = "Creator — " + suffix;
+            String newName = "Producer — " + suffix;
+            if (templateRepository.existsByName(newName)) continue;
+            templateRepository.findFirstByName(oldName).ifPresent(t -> {
+                t.setName(newName);
+                t.setHtmlContent(producerWording(t.getHtmlContent()));
+                t.setCtaLabel(producerWording(t.getCtaLabel()));
+                t.setCtaUrl(t.getCtaUrl() == null ? null
+                        : t.getCtaUrl().replace("/creator/", "/producer/").replaceAll("/creator$", "/producer"));
+                templateRepository.save(t);
+                log.info("Renamed email template: {} -> {}", oldName, newName);
+            });
+        }
+    }
+
+    private static String producerWording(String s) {
+        if (s == null) return null;
+        return s.replace("[Creator name]", "[Producer name]").replace("Maker Studio", "Producer Studio")
+                .replaceAll("\\bcreators\\b", "producers").replaceAll("\\bcreator\\b", "producer")
+                .replaceAll("\\bmakers\\b", "producers").replaceAll("\\bmaker\\b", "producer");
     }
 
     private record Seed(String name, String category, String senderName,
@@ -92,7 +120,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
                 "Hi [Name],",
                 "UKEN brings you handcrafted goods and produce from independent artisans and farmers " +
                     "across Kenya, Uganda, Tanzania, Rwanda and beyond — each piece carries a story, a " +
-                    "region, and a maker's name behind it.",
+                    "region, and a producer's name behind it.",
                 "We'd love for you to see what's on the shelf right now: coffee, tea, beadwork, textiles, " +
                     "home pieces, and more, every one traceable back to who made or grew it."
             ),
@@ -101,7 +129,7 @@ public class EmailTemplateSeeder implements ApplicationRunner {
         new Seed("Pitch — New arrivals", "PITCH", SALES,
             p(
                 "Hi [Name],",
-                "<strong>Just added</strong> — new pieces from this season's makers.",
+                "<strong>Just added</strong> — new pieces from this season's producers.",
                 "Every item is made to order or in small batches — once a run sells out, it's gone. " +
                     "Here's your first look before the rest of the list gets it.",
                 "Free from the middleman markup — prices go straight back to the person who made it."
@@ -138,35 +166,35 @@ public class EmailTemplateSeeder implements ApplicationRunner {
             null, null),
 
         // ── Creator communications ────────────────────────────────────
-        new Seed("Creator — Welcome & next steps", "CREATOR", OPERATIONS,
+        new Seed("Producer — Welcome & next steps", "CREATOR", OPERATIONS,
             p(
-                "Hi [Creator name],",
+                "Hi [Producer name],",
                 "Welcome to UKEN — we're excited to have your work on the platform.",
                 "A few things to do before your first listing goes live: add clear photos, fill in the " +
                     "story behind each piece, and set the weight per unit so shipping calculates correctly " +
                     "at checkout.",
                 "Reach out any time if something's unclear — we're rooting for you."
             ),
-            "Open your Maker Studio", "https://ukena.co.uk/creator"),
+            "Open your Producer Studio", "https://ukena.co.uk/producer"),
 
-        new Seed("Creator — Listing needs attention", "CREATOR", OPERATIONS,
+        new Seed("Producer — Listing needs attention", "CREATOR", OPERATIONS,
             p(
-                "Hi [Creator name],",
+                "Hi [Producer name],",
                 "Quick note on <strong>[Product name]</strong> — [what's missing: weight / photos / " +
                     "description, etc.] still needs to be filled in before it can go live for buyers.",
                 "It only takes a couple of minutes to update from your dashboard.",
                 "Let us know if you'd like a hand with it."
             ),
-            "Update your listing", "https://ukena.co.uk/creator/products"),
+            "Update your listing", "https://ukena.co.uk/producer/products"),
 
-        new Seed("Creator — Payout sent", "CREATOR", OPERATIONS,
+        new Seed("Producer — Payout sent", "CREATOR", OPERATIONS,
             p(
-                "Hi [Creator name],",
+                "Hi [Producer name],",
                 "Good news — a payout of <strong>[Amount]</strong> for your recent sales has been sent " +
                     "and should reach you within [timeframe].",
                 "You can see the full breakdown any time in your earnings dashboard.",
                 "Thank you for the work you put into every piece — it shows."
             ),
-            "View your earnings", "https://ukena.co.uk/creator/earnings")
+            "View your earnings", "https://ukena.co.uk/producer/earnings")
     );
 }

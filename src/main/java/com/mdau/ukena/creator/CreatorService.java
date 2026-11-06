@@ -30,14 +30,14 @@ public class CreatorService {
     public CreatorDetail getById(String id) {
         Creator creator = creatorRepository.findById(id)
                 .filter(c -> !c.isDeleted()) // hidden: under review, rejected or removed
-                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer not found"));
         return toDetail(creator);
     }
 
     @Transactional(readOnly = true)
     public CreatorDetail getByCreatorId(String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer profile not found"));
         return toDetail(creator);
     }
 
@@ -45,7 +45,7 @@ public class CreatorService {
     @Transactional(readOnly = true)
     public PayoutDetails getPayout(String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer profile not found"));
         if (creator.getPayoutMethod() == null) return null;
         return new PayoutDetails(creator.getPayoutMethod(), creator.getPayoutAccount(),
                 creator.getPayoutAccountName(), creator.getPayoutBankName());
@@ -54,7 +54,7 @@ public class CreatorService {
     @Transactional
     public PayoutDetails updatePayout(String creatorId, PayoutDetails req) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer profile not found"));
         boolean bank = "BANK".equals(req.method());
         if (bank && (req.bankName() == null || req.bankName().isBlank()))
             throw ApiException.badRequest("Enter the bank name");
@@ -69,7 +69,7 @@ public class CreatorService {
     @Transactional
     public CreatorDetail updateProfile(String creatorId, CreatorProfileUpdate req) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator profile not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer profile not found"));
         if (req.firstName()       != null) creator.setFirstName(req.firstName());
         if (req.fullName()        != null) creator.setFullName(req.fullName());
         if (req.region()          != null) creator.setRegion(req.region());

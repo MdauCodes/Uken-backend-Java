@@ -7,5 +7,5 @@
   <div class="detail-row"><span>${item.quantity}× ${item.name}</span><span>${item.lineTotal}</span></div>
   </#list>
   <div class="detail-row"><span><strong>Total paid</strong></span><strong>${totalFormatted}</strong></div>
-  <p class="muted">Thank you for supporting East African makers directly — see you at the next market.</p>
+  <p class="muted">Thank you for supporting East African producers directly — see you at the next market.</p>
 </@m.layout>

@@ -157,7 +157,7 @@ public class ProductService {
     @Transactional
     public ProductDto create(String creatorId, ProductCreateRequest req) {
         Creator creator = creatorRepository.findActiveById(creatorId)
-                .orElseThrow(() -> ApiException.forbidden("No active creator profile found"));
+                .orElseThrow(() -> ApiException.forbidden("No active producer profile found"));
         validateCompareAtPrice(req.compareAtPricePence(), req.pricePence());
         String slug = generateSlug(req.name());
         Product product = Product.builder()
@@ -205,7 +205,7 @@ public class ProductService {
         product.setStatus(next);
         ProductDto dto = toDto(productRepository.save(product));
         auditLogService.record(actor, "PRODUCT_STATUS_CHANGED", "PRODUCT", productId, product.getName(),
-                prev + " -> " + next + " (by creator)");
+                prev + " -> " + next + " (by producer)");
         return dto;
     }
 
@@ -233,7 +233,7 @@ public class ProductService {
         log.info("Product {} soft-deleted by creator {} — 7-day recovery window started",
                 productId, actor.creatorId());
         auditLogService.record(actor, "PRODUCT_DELETED", "PRODUCT", productId, product.getName(),
-                "Soft-deleted by creator; images retained for 7 days");
+                "Soft-deleted by producer; images retained for 7 days");
     }
 
     /** Soft-delete only — see {@link #delete(CurrentUser, String)}. */

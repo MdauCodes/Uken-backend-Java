@@ -95,7 +95,7 @@ public class OrderFlowService {
         Order order = load(displayId);
         boolean hasMaker = order.getItems().stream()
                 .anyMatch(i -> i.getCreator() != null && i.getCreator().getId().equals(creatorId));
-        if (!hasMaker) throw ApiException.badRequest("That maker isn't on this order");
+        if (!hasMaker) throw ApiException.badRequest("That producer isn't on this order");
         Map<String, Boolean> map = orderService.readMakerReady(order);
         map.put(creatorId, ready);
         order.setMakerReady(write(map));
@@ -108,7 +108,7 @@ public class OrderFlowService {
     public OrderDto makerDroppedAtHub(String displayId, String creatorId) {
         Order order = load(displayId);
         if (order.effectiveStage() != IN_PRODUCTION)
-            throw ApiException.badRequest("This order isn't waiting for makers right now");
+            throw ApiException.badRequest("This order isn't waiting for producers right now");
         setMakerReady(displayId, creatorId, true);
         return orderService.toDto(order);
     }
@@ -157,7 +157,7 @@ public class OrderFlowService {
                 return orderService.adminRefund(displayId, null, actor);
             }
             case "RESEND" -> moveTo(order, IN_PRODUCTION, staffName(actor),
-                    "Replacement requested from the maker" + (isBlank(req.note()) ? "" : ": " + req.note().trim()), false);
+                    "Replacement requested from the producer" + (isBlank(req.note()) ? "" : ": " + req.note().trim()), false);
             default -> moveTo(order, COMPLETED, staffName(actor),
                     "Resolved with the buyer" + (isBlank(req.note()) ? "" : ": " + req.note().trim()), false);
         }

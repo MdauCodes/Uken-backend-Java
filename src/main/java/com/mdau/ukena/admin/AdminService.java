@@ -192,7 +192,7 @@ public class AdminService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.notFound("User not found"));
         if (user.getRole() == UserRole.ROLE_CREATOR) {
-            throw ApiException.badRequest("This account is already a creator");
+            throw ApiException.badRequest("This account is already a producer");
         }
 
         String slug = Slugify.slugify(user.getFullName());
@@ -242,7 +242,7 @@ public class AdminService {
     @Transactional
     public void suspendCreator(CurrentUser actor, String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer not found"));
         creator.setDeletedAt(Instant.now());
         creatorRepository.save(creator);
         userRepository.findByCreatorId(creatorId).ifPresent(u -> {
@@ -252,13 +252,13 @@ public class AdminService {
         int n = productRepository.suspendAllByCreatorId(creatorId);
         log.info("Creator {} suspended - {} products suspended", creatorId, n);
         auditLogService.record(actor, "CREATOR_SUSPENDED", "CREATOR", creatorId, creator.getFullName(),
-                n + " product(s) suspended along with the creator");
+                n + " product(s) suspended along with the producer");
     }
 
     @Transactional
     public void unsuspendCreator(CurrentUser actor, String creatorId) {
         Creator creator = creatorRepository.findById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer not found"));
         creator.setDeletedAt(null);
         creatorRepository.save(creator);
         userRepository.findByCreatorId(creatorId).ifPresent(u -> {
@@ -268,7 +268,7 @@ public class AdminService {
         int n = productRepository.restoreAllByCreatorId(creatorId);
         log.info("Creator {} unsuspended - {} products restored", creatorId, n);
         auditLogService.record(actor, "CREATOR_UNSUSPENDED", "CREATOR", creatorId, creator.getFullName(),
-                n + " product(s) restored along with the creator");
+                n + " product(s) restored along with the producer");
     }
 
     // ── Payouts ──────────────────────────────────────────────
@@ -283,7 +283,7 @@ public class AdminService {
     public CreatorPayoutDto processPayout(String creatorId,
                                           String accountNumber, String accountName) {
         Creator creator = creatorRepository.findActiveById(creatorId)
-                .orElseThrow(() -> ApiException.notFound("Creator not found"));
+                .orElseThrow(() -> ApiException.notFound("Producer not found"));
         PayoutRecord payout = payoutRepository.findByCreatorId(creatorId)
                 .orElseGet(() -> PayoutRecord.builder()
                         .creatorId(creatorId).creator(creator).build());
@@ -432,7 +432,7 @@ public class AdminService {
                 .orElseGet(() -> creatorRepository.findById(creatorId)
                         .map(c -> new CreatorPayoutDto(c.getId(), c.getFullName(), c.getRegion(), c.getCraft(),
                                 0, 0, 0, null))
-                        .orElseThrow(() -> ApiException.notFound("Creator profile not found")));
+                        .orElseThrow(() -> ApiException.notFound("Producer profile not found")));
     }
 
     private CreatorPayoutDto toPayoutDto(PayoutRecord p) {

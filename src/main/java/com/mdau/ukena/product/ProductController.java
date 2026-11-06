@@ -177,7 +177,7 @@ public class ProductController {
     public ResponseEntity<ApiResponse<Integer>> sendWeightReminders() {
         int sent = productService.sendWeightReminders();
         return ResponseEntity.ok(ApiResponse.ok(sent,
-                sent + " creator" + (sent == 1 ? "" : "s") + " emailed"));
+                sent + " producer" + (sent == 1 ? "" : "s") + " emailed"));
     }
 
     // ── Admin: Uken catalogue management ─────────────────────

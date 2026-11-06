@@ -141,7 +141,7 @@ public class EmailServiceImpl implements EmailService {
         model.put("loginUrl", frontendUrl + "/signin");
         model.put("dashboardUrl", frontendUrl + "/dashboard");
         model.put("baseUrl", frontendUrl);
-        return send(email, "Welcome to Ukena - your creator account is ready",
+        return send(email, "Welcome to Ukena - your producer account is ready",
                 "creator-welcome.ftl", model);
     }
 
@@ -297,7 +297,7 @@ public class EmailServiceImpl implements EmailService {
         model.put("name", fullName);
         model.put("productNames", productNames);
         model.put("productCount", productNames.size());
-        model.put("dashboardUrl", frontendUrl + "/creator/products");
+        model.put("dashboardUrl", frontendUrl + "/producer/products");
         model.put("baseUrl", frontendUrl);
         return send(email, "Action needed: add package weight for your Ukena pieces",
                 "weight-reminder.ftl", model);
@@ -334,7 +334,7 @@ public class EmailServiceImpl implements EmailService {
 
     private String toStatusLabel(String status) {
         return switch (status.toUpperCase()) {
-            case "PREPARING", "IN_PRODUCTION" -> "Your maker is preparing it";
+            case "PREPARING", "IN_PRODUCTION" -> "Your producer is preparing it";
             case "IN_AIR"     -> "Your parcel is flying to the UK";
             case "OUT_FOR_DELIVERY" -> "Your parcel is out with Royal Mail";
             case "READY_TO_COLLECT" -> "Your order is ready to collect at the market";

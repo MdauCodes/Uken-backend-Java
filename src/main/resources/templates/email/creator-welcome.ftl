@@ -1,8 +1,8 @@
 <#import "macros.ftl" as m>
 <@m.layout title="Welcome to Ukena">
   <p class="h1">Welcome to Ukena, ${name}.</p>
-  <p>Your application has been approved. Your creator account is ready.</p>
-  <div class="detail-row"><span>Your creator page</span><strong>${creatorId}</strong></div>
+  <p>Your application has been approved. Your producer account is ready.</p>
+  <div class="detail-row"><span>Your producer page</span><strong>${creatorId}</strong></div>
   <#if tempPassword?? && tempPassword?has_content>
     <div class="detail-row"><span>Temporary password</span><strong>${tempPassword}</strong></div>
     <p class="muted">Please change your password after your first login.</p>

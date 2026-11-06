@@ -429,7 +429,7 @@ public class PaymentService {
         int netPence = ledgerRepository
                 .sumNetPenceByArtisanProfileIdAndStatus(creatorId, LedgerStatus.PENDING);
         if (netPence <= 0)
-            throw ApiException.badRequest("No pending earnings for creator " + creatorId);
+            throw ApiException.badRequest("No pending earnings for producer " + creatorId);
 
         PayoutResult result = paymentGateway.initiateTransfer(new PayoutRequest(
                 creatorId, netPence, accountNumber, accountName,

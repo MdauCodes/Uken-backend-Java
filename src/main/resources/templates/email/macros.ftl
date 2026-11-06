@@ -34,7 +34,7 @@
   <div class="about">
     <strong style="color:#1a0f07;">About UKEN</strong> — we connect independent artisans and farmers
     across Kenya and the UK directly with buyers who value the story behind what they own. Every
-    piece is made by hand, priced fairly, and shipped with the maker's name attached — no
+    piece is made by hand, priced fairly, and shipped with the producer's name attached — no
     middleman markup, no anonymous factory batch.
   </div>
   <div class="footer">

@@ -274,7 +274,7 @@ public class ApplicationService {
             throw ApiException.conflict(
                     "ROLE_CONFLICT: This email already has an existing "
                             + existingUser.getRole().name()
-                            + " account. Approving will convert that account into a creator"
+                            + " account. Approving will convert that account into a producer"
                             + " — confirm to proceed.");
         }
 

@@ -5,4 +5,6 @@ import java.util.UUID;
 
 public interface EmailTemplateRepository extends JpaRepository<EmailTemplate, UUID> {
     boolean existsByName(String name);
+
+    java.util.Optional<EmailTemplate> findFirstByName(String name);
 }
